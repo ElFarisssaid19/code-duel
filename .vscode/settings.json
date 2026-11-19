@@ -12,8 +12,7 @@
     "editor.defaultFormatter": "Prisma.prisma"
   },
   "files.associations": {
-    "*.css": "tailwindcss",
-    "judge0.conf*": "properties"
+    "*.css": "tailwindcss"
   },
   "tailwindCSS.experimental.configFile": "client/src/index.css",
   "tailwindCSS.classAttributes": ["class", "className"],

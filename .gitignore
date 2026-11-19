@@ -22,9 +22,6 @@ npm-debug.log*
 # Prisma generated client
 server/src/generated/
 
-# Judge0 config holds generated secrets (see infra/judge0/judge0.conf.example)
-infra/judge0/judge0.conf
-
 # Editors / OS
 .idea/
 *.sw?

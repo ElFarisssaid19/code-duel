@@ -29,6 +29,7 @@ export default function StatusPage() {
 
   const apiState = loading ? 'pending' : error ? 'error' : 'ok';
   const dbState = loading ? 'pending' : data?.db === 'ok' ? 'ok' : 'error';
+  const judgeState = loading ? 'pending' : data?.judge === 'ok' ? 'ok' : 'error';
   const authState =
     authStatus === 'authenticated' ? 'ok' : authStatus === 'loading' ? 'pending' : 'error';
   const socketIndicator =
@@ -57,6 +58,11 @@ export default function StatusPage() {
           label="Database"
           state={dbState}
           detail={loading ? 'checking…' : (data?.db ?? 'unknown')}
+        />
+        <StatusCard
+          label="Judge (go-judge)"
+          state={judgeState}
+          detail={loading ? 'checking…' : (data?.judge ?? 'unknown')}
         />
         <StatusCard
           label="Session"

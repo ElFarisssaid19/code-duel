@@ -46,12 +46,18 @@ export default function HomePage() {
           <Stat label="Draws" value={user.draws} className="text-zinc-300" />
         </dl>
 
-        <div className="mt-6 flex items-center justify-between gap-4">
-          <p className="text-xs text-zinc-500">Matchmaking is coming in the next phase.</p>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <Link
+            to="/problems"
+            className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400"
+          >
+            Practice problems →
+          </Link>
           <Button variant="secondary" loading={loggingOut} onClick={handleLogout}>
             Log out
           </Button>
         </div>
+        <p className="mt-4 text-xs text-zinc-500">1v1 matchmaking is coming in the next phase.</p>
       </section>
 
       {import.meta.env.DEV && (

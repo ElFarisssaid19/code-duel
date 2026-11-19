@@ -11,6 +11,10 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, 'src') },
   },
+  build: {
+    // Monaco's core is ~2.7 MB; it only loads on the lazy practice page (see src/App.jsx).
+    chunkSizeWarningLimit: 3000,
+  },
   server: {
     port: 5173,
     strictPort: true,

@@ -26,6 +26,39 @@ services:
       retries: 20
       start_period: 30s
 
+  # Code execution sandbox (https://github.com/criyle/go-judge). See infra/go-judge/.
+  go-judge:
+    build: ./go-judge
+    image: code-duel-go-judge:v1.14.1
+    container_name: code-duel-go-judge
+    restart: unless-stopped
+    # Required by go-judge: user programs run in nested containers (namespaces + cgroup v2).
+    privileged: true
+    # go-judge keeps its file store in /dev/shm.
+    shm_size: 256m
+    environment:
+      ES_HTTP_ADDR: ':5050'
+      ES_RELEASE: 'true'
+      ES_SILENT: 'true'
+      # Safety net: cached files expire even if the server never deletes them.
+      ES_FILE_TIMEOUT: '10m'
+    ports:
+      # Never expose this outside localhost: anyone who can reach it can run code.
+      - '127.0.0.1:${JUDGE_PORT:-5050}:5050'
+    healthcheck:
+      # The image has no curl; node is already there for user code.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:5050/version').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   mysql_data:
     name: code-duel-mysql-data

@@ -1,10 +1,9 @@
 import { prisma } from '../lib/prisma.js';
+import { judgeHealth } from '../services/judge/index.js';
 
 const DB_TIMEOUT_MS = 3000;
 
-/** GET /api/health: reports API status and runs a real query against MySQL. */
-export async function getHealth(req, res) {
-  let db = 'ok';
+async function checkDatabase() {
   try {
     await Promise.race([
       prisma.$queryRaw`SELECT 1`,
@@ -12,10 +11,15 @@ export async function getHealth(req, res) {
         setTimeout(() => reject(new Error(`timed out after ${DB_TIMEOUT_MS}ms`)), DB_TIMEOUT_MS),
       ),
     ]);
+    return 'ok';
   } catch (err) {
-    db = 'error';
     console.error('[health] database check failed:', err.message);
+    return 'error';
   }
+}
 
-  res.json({ status: 'ok', db, uptime: process.uptime() });
+/** GET /api/health: API status, a real query against MySQL, and the code runner. */
+export async function getHealth(req, res) {
+  const [db, judgeOk] = await Promise.all([checkDatabase(), judgeHealth()]);
+  res.json({ status: 'ok', db, judge: judgeOk ? 'ok' : 'error', uptime: process.uptime() });
 }

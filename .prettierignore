@@ -4,5 +4,4 @@ coverage
 package-lock.json
 server/src/generated
 server/prisma/migrations
-infra/judge0
 *.log

@@ -12,3 +12,45 @@
     @apply min-h-screen bg-zinc-950 text-zinc-100 antialiased;
   }
 }
+
+/* Rendered problem statements (markdown). */
+@layer components {
+  .markdown {
+    @apply space-y-4 text-[0.938rem] leading-relaxed text-zinc-300;
+  }
+  .markdown h1,
+  .markdown h2,
+  .markdown h3 {
+    @apply pt-2 font-semibold text-zinc-100;
+  }
+  .markdown h3 {
+    @apply text-base;
+  }
+  .markdown strong {
+    @apply font-semibold text-zinc-100;
+  }
+  .markdown a {
+    @apply text-emerald-400 underline underline-offset-2;
+  }
+  .markdown ul {
+    @apply list-disc space-y-1.5 pl-5;
+  }
+  .markdown ol {
+    @apply list-decimal space-y-1.5 pl-5;
+  }
+  .markdown code {
+    @apply rounded bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[0.85em] text-zinc-200;
+  }
+  .markdown pre {
+    @apply overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950/70 p-3.5 leading-normal;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0 text-[0.85rem];
+  }
+}
+
+@layer components {
+  .kbd {
+    @apply rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-mono text-[0.75rem] text-zinc-300;
+  }
+}

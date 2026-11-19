@@ -11,7 +11,8 @@ const envSchema = z.object({
   JWT_SECRET: z
     .string({ error: 'JWT_SECRET is required' })
     .min(32, 'JWT_SECRET must be at least 32 characters (openssl rand -hex 64)'),
-  JUDGE0_URL: z.url({ error: 'JUDGE0_URL must be a valid URL, e.g. http://localhost:2358' }),
+  JUDGE_URL: z.url({ error: 'JUDGE_URL must be a valid URL, e.g. http://localhost:5050' }),
+  JUDGE_PROVIDER: z.enum(['gojudge']).default('gojudge'),
 });
 
 const parsed = envSchema.safeParse(process.env);

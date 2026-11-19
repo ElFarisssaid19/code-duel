@@ -12,7 +12,6 @@ export default defineConfig([
     '**/coverage/',
     'server/src/generated/',
     'server/prisma/migrations/',
-    'infra/judge0/',
   ]),
 
   // Shared rules for all JS in the monorepo
@@ -38,6 +37,19 @@ export default defineConfig([
   {
     files: ['server/**/*.js', '*.{js,mjs,cjs}', 'client/vite.config.js'],
     languageOptions: { globals: globals.node },
+  },
+
+  // CommonJS scripts (e.g. the judge harness that runs inside the sandbox)
+  {
+    files: ['**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs', globals: globals.node },
+  },
+
+  // Reference solutions are user-style scripts: they define the function the judge harness calls.
+  {
+    files: ['server/prisma/seed/solutions/**/*.js'],
+    languageOptions: { sourceType: 'script' },
+    rules: { 'no-unused-vars': 'off' },
   },
 
   // React (browser) rules, scoped to the client
