@@ -1,0 +1,37 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+  "eslint.validate": ["javascript", "javascriptreact"],
+  "prettier.requireConfig": true,
+  "[prisma]": {
+    "editor.defaultFormatter": "Prisma.prisma"
+  },
+  "files.associations": {
+    "*.css": "tailwindcss",
+    "judge0.conf*": "properties"
+  },
+  "tailwindCSS.experimental.configFile": "client/src/index.css",
+  "tailwindCSS.classAttributes": ["class", "className"],
+  "tailwindCSS.classFunctions": ["clsx", "cn", "cva"],
+  "tailwindCSS.includeLanguages": {
+    "javascript": "javascript",
+    "javascriptreact": "javascriptreact"
+  },
+  "editor.quickSuggestions": {
+    "strings": "on"
+  },
+  "files.exclude": {
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "server/src/generated": true,
+    "package-lock.json": true
+  }
+}

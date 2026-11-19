@@ -1,0 +1,41 @@
+{
+  "name": "code-duel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time 1v1 coding battle app",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names \"server,client\" --prefix-colors \"blue.bold,magenta.bold\" \"npm run dev -w server\" \"npm run dev -w client\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --wait",
+    "db:down": "docker compose -f infra/docker-compose.yml --env-file infra/.env down",
+    "db:logs": "docker compose -f infra/docker-compose.yml --env-file infra/.env logs -f mysql",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:studio": "npm run db:studio -w server",
+    "db:generate": "npm run db:generate -w server"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.7",
+    "eslint": "^10.15.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.8",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
+    "prettier-plugin-tailwindcss": "^0.8.1"
+  },
+  "overrides": {
+    "dompurify": "^3.4.18"
+  }
+}
