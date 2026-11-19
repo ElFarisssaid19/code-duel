@@ -21,7 +21,14 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
  * SECURITY: only the inputs enter the sandbox. Expected outputs never leave the server;
  * evaluate.js compares them after the run.
  */
-export function buildHarnessRun({ language, code, functionName, inputs, timeLimitMs }) {
+export function buildHarnessRun({
+  language,
+  code,
+  functionName,
+  inputs,
+  timeLimitMs,
+  captureLogs = true,
+}) {
   const lang = LANGUAGES[language];
   if (!lang) throw new Error(`Unsupported language: ${language}`);
   if (!IDENTIFIER.test(functionName)) throw new Error(`Invalid function name: ${functionName}`);
@@ -35,7 +42,8 @@ export function buildHarnessRun({ language, code, functionName, inputs, timeLimi
     stdin: JSON.stringify({
       functionName,
       timeLimitMs,
-      maxLogBytes: MAX_LOG_BYTES_PER_TEST,
+      // 0 = user console output is discarded inside the sandbox (hidden-test runs).
+      maxLogBytes: captureLogs ? MAX_LOG_BYTES_PER_TEST : 0,
       resultsFile: RESULTS_FILE,
       tests: inputs,
     }),

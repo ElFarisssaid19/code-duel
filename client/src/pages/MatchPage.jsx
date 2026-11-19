@@ -1,0 +1,392 @@
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
+import Button from '@/components/Button.jsx';
+import FullPageSpinner from '@/components/FullPageSpinner.jsx';
+import Modal from '@/components/Modal.jsx';
+import ToastStack from '@/components/ToastStack.jsx';
+import Countdown from '@/components/match/Countdown.jsx';
+import MatchTimer from '@/components/match/MatchTimer.jsx';
+import PlayerProgress from '@/components/match/PlayerProgress.jsx';
+import ResultModal from '@/components/match/ResultModal.jsx';
+import CodeEditor from '@/components/practice/CodeEditor.jsx';
+import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
+import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
+import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
+import { paramNames } from '@/components/practice/params.js';
+import { useNow } from '@/hooks/useNow.js';
+import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
+import { useToasts } from '@/hooks/useToasts.js';
+import { request, socket } from '@/lib/socket.js';
+import { loadItem, saveItem } from '@/lib/storage.js';
+
+const FILE_EXTENSIONS = { javascript: 'js', python: 'py' };
+const ACTIVITY_PING_MS = 1500;
+const TYPING_VISIBLE_MS = 2500;
+const codeKey = (matchId, language) => `code-duel:match:${matchId}:code:${language}`;
+const languageKey = (matchId) => `code-duel:match:${matchId}:language`;
+
+/** Client copy of the match state; every change comes from the server (snapshot or event). */
+function reducer(state, action) {
+  // Events can arrive before the first snapshot (e.g. match:countdown triggered by the other
+  // player joining): ignore them, the snapshot already reflects them.
+  if (state === null && action.type !== 'snapshot') return state;
+  switch (action.type) {
+    case 'snapshot':
+      return action.snapshot;
+    case 'countdown':
+      return { ...state, status: 'COUNTDOWN', startsAt: action.startsAt };
+    case 'start':
+      return {
+        ...state,
+        status: 'ACTIVE',
+        problem: action.problem,
+        endsAt: action.endsAt,
+        me: { ...state.me, ...action.me },
+        opponent: { ...state.opponent, ...action.opponent },
+      };
+    case 'myProgress':
+      return { ...state, me: { ...state.me, ...action.progress } };
+    case 'opponentProgress':
+      return { ...state, opponent: { ...state.opponent, ...action.progress } };
+    case 'opponentConnection':
+      return { ...state, opponent: { ...state.opponent, connected: action.connected } };
+    case 'end':
+      return {
+        ...state,
+        status: action.result.reason === 'CANCELLED' ? 'CANCELLED' : 'FINISHED',
+        result: action.result,
+      };
+    case 'rematch':
+      return { ...state, rematch: action.rematch };
+    default:
+      return state;
+  }
+}
+
+function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
+  const { problem, me, opponent } = state;
+  const live = state.status === 'ACTIVE';
+  const now = useNow(250);
+
+  const [language, setLanguage] = useState(() => {
+    const saved = loadItem(languageKey(matchId));
+    return saved in FILE_EXTENSIONS ? saved : 'javascript';
+  });
+  const [code, setCode] = useState(
+    () => loadItem(codeKey(matchId, language)) ?? problem.starterCode[language],
+  );
+  const [running, setRunning] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState(0);
+  const runningRef = useRef(false);
+  const lastPing = useRef(0);
+
+  function changeCode(next) {
+    setCode(next);
+    saveItem(codeKey(matchId, language), next); // restored after a refresh
+    if (live && Date.now() - lastPing.current > ACTIVITY_PING_MS) {
+      lastPing.current = Date.now();
+      socket.emit('match:activity');
+    }
+  }
+
+  function changeLanguage(next) {
+    setLanguage(next);
+    setCode(loadItem(codeKey(matchId, next)) ?? problem.starterCode[next]);
+    saveItem(languageKey(matchId), next);
+  }
+
+  const execute = useCallback(
+    async (mode) => {
+      if (runningRef.current || !live) return;
+      runningRef.current = true;
+      setRunning(mode);
+      setError(null);
+      try {
+        const data = await request(mode === 'run' ? 'match:run' : 'match:submit', {
+          language,
+          code,
+        });
+        setResult(data.result);
+        setActiveTab(
+          Math.max(
+            0,
+            data.result.tests.findIndex((t) => t.status !== 'ACCEPTED'),
+          ),
+        );
+      } catch (err) {
+        setError(err);
+      } finally {
+        runningRef.current = false;
+        setRunning(null);
+      }
+    },
+    [language, code, live],
+  );
+  const run = useCallback(() => execute('run'), [execute]);
+  const submit = useCallback(() => execute('submit'), [execute]);
+  useRunShortcuts(run, submit);
+
+  const params = paramNames(problem.starterCode[language]);
+
+  return (
+    <div className="flex flex-col lg:h-screen">
+      <header className="border-b border-zinc-800 bg-zinc-950 px-4 py-3">
+        <div className="flex items-center gap-4">
+          <PlayerProgress player={me} label="you" />
+          <div className="flex shrink-0 flex-col items-center px-2">
+            <MatchTimer endsAt={state.endsAt} now={now} offsetMs={offsetMs} stopped={!live} />
+            <span className="text-[0.7rem] tracking-wide text-zinc-500 uppercase">
+              {state.mode === 'RANKED' ? 'Ranked' : 'Private'}
+            </span>
+          </div>
+          <PlayerProgress
+            player={opponent}
+            align="right"
+            accent="sky"
+            typing={live && now < typingUntil}
+          />
+        </div>
+      </header>
+
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <section
+          className="min-h-0 min-w-0 overflow-y-auto border-zinc-800 lg:border-r"
+          aria-label="Problem"
+        >
+          <ProblemStatement problem={problem} params={params} />
+        </section>
+
+        <section className="flex min-h-0 min-w-0 flex-col" aria-label="Editor and results">
+          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
+            <LanguageSelect
+              value={language}
+              onChange={changeLanguage}
+              disabled={Boolean(running)}
+            />
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={onForfeit}
+                disabled={!live}
+                className="text-red-300"
+              >
+                Forfeit
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={run}
+                loading={running === 'run'}
+                disabled={Boolean(running) || !live}
+                title="Run sample tests (Ctrl+Enter)"
+              >
+                Run
+              </Button>
+              <Button
+                onClick={submit}
+                loading={running === 'submit'}
+                disabled={Boolean(running) || !live}
+                title="Submit (Ctrl+Shift+Enter)"
+              >
+                Submit
+              </Button>
+            </div>
+          </div>
+          <div className="h-[420px] min-h-0 border-b border-zinc-800 lg:h-auto lg:flex-[3]">
+            <CodeEditor
+              path={`match-${matchId}/solution.${FILE_EXTENSIONS[language]}`}
+              language={language}
+              value={code}
+              onChange={changeCode}
+              onRun={run}
+              onSubmit={submit}
+            />
+          </div>
+          <div className="min-h-[220px] overflow-y-auto p-4 lg:flex-[2]" aria-live="polite">
+            <ResultsPanel
+              result={result}
+              running={running}
+              error={error}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              params={params}
+            />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function MatchSession({ matchId }) {
+  const navigate = useNavigate();
+  const [state, dispatch] = useReducer(reducer, null);
+  const [loadError, setLoadError] = useState(null);
+  const [offsetMs, setOffsetMs] = useState(0); // server clock − client clock
+  const [typingUntil, setTypingUntil] = useState(0);
+  const [confirmForfeit, setConfirmForfeit] = useState(false);
+  const [forfeiting, setForfeiting] = useState(false);
+  const [rematchBusy, setRematchBusy] = useState(false);
+  const [rematchError, setRematchError] = useState(null);
+  const [toasts, toast] = useToasts();
+  const opponentPassed = useRef(0);
+  const now = useNow(200);
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncClock = (serverNow) => serverNow && setOffsetMs(serverNow - Date.now());
+
+    // (Re)join on mount and after every reconnect: restores timer, progress and result.
+    async function rejoin() {
+      try {
+        const snapshot = await request('match:rejoin', { matchId });
+        if (cancelled) return;
+        syncClock(snapshot.serverNow);
+        opponentPassed.current = snapshot.opponent.passed;
+        dispatch({ type: 'snapshot', snapshot });
+      } catch (err) {
+        if (!cancelled) setLoadError(err);
+      }
+    }
+
+    const handlers = {
+      connect: rejoin,
+      'match:countdown': (p) => {
+        syncClock(p.serverNow);
+        dispatch({ type: 'countdown', startsAt: p.startsAt });
+      },
+      'match:start': (p) => {
+        syncClock(p.serverNow);
+        dispatch({ type: 'start', ...p });
+      },
+      'match:submit:result': (p) => dispatch({ type: 'myProgress', progress: p.progress }),
+      'opponent:progress': (progress) => {
+        if (progress.passed > opponentPassed.current) {
+          toast(`Your opponent now passes ${progress.passed}/${progress.total} tests`, 'warning');
+        }
+        opponentPassed.current = Math.max(opponentPassed.current, progress.passed);
+        dispatch({ type: 'opponentProgress', progress });
+      },
+      'opponent:activity': () => setTypingUntil(Date.now() + TYPING_VISIBLE_MS),
+      'opponent:connection': ({ connected }) => {
+        dispatch({ type: 'opponentConnection', connected });
+        toast(
+          connected
+            ? 'Your opponent reconnected'
+            : 'Your opponent disconnected (30 s to come back)',
+          connected ? 'default' : 'warning',
+        );
+      },
+      'match:end': (result) => result.matchId === matchId && dispatch({ type: 'end', result }),
+      'rematch:update': (rematch) =>
+        rematch.matchId === matchId && dispatch({ type: 'rematch', rematch }),
+    };
+    for (const [event, handler] of Object.entries(handlers)) socket.on(event, handler);
+    if (socket.connected) rejoin();
+    return () => {
+      cancelled = true;
+      for (const [event, handler] of Object.entries(handlers)) socket.off(event, handler);
+    };
+  }, [matchId, toast]);
+
+  async function forfeit() {
+    setForfeiting(true);
+    try {
+      await request('match:forfeit');
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      setForfeiting(false);
+      setConfirmForfeit(false);
+    }
+  }
+
+  async function rematch() {
+    setRematchBusy(true);
+    setRematchError(null);
+    try {
+      const offer = await request('rematch:request', { matchId });
+      dispatch({ type: 'rematch', rematch: offer }); // accepted → match:found navigates
+    } catch (err) {
+      setRematchError(err.message);
+    } finally {
+      setRematchBusy(false);
+    }
+  }
+
+  if (loadError) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-lg font-semibold">{loadError.message}</p>
+        <Link to="/" className="text-sm text-emerald-400 hover:text-emerald-300">
+          ← Back home
+        </Link>
+      </main>
+    );
+  }
+  if (!state) return <FullPageSpinner />;
+
+  const ended = state.status === 'FINISHED' || state.status === 'CANCELLED';
+  return (
+    <>
+      {state.problem ? (
+        <Arena
+          state={state}
+          matchId={matchId}
+          offsetMs={offsetMs}
+          typingUntil={typingUntil}
+          onForfeit={() => setConfirmForfeit(true)}
+        />
+      ) : (
+        !ended && <Countdown state={state} now={now} offsetMs={offsetMs} />
+      )}
+
+      <Modal
+        open={confirmForfeit && !ended}
+        title="Forfeit the match?"
+        onClose={() => setConfirmForfeit(false)}
+        tone="danger"
+      >
+        <p className="text-sm text-zinc-300">
+          {state.opponent.username} wins immediately
+          {state.mode === 'RANKED' ? ' and you lose ELO' : ''}.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setConfirmForfeit(false)}>
+            Keep playing
+          </Button>
+          <Button
+            onClick={forfeit}
+            loading={forfeiting}
+            className="bg-red-500 text-white hover:bg-red-400"
+          >
+            Forfeit
+          </Button>
+        </div>
+      </Modal>
+
+      {ended && state.result && (
+        <ResultModal
+          result={state.result}
+          meId={state.me.userId}
+          opponentName={state.opponent.username}
+          rematch={
+            state.rematch ??
+            (state.result.mode === 'PRIVATE' ? { status: 'open', requestedBy: [] } : null)
+          }
+          onRematch={rematch}
+          rematchBusy={rematchBusy}
+          rematchError={rematchError}
+          onHome={() => navigate('/')}
+        />
+      )}
+      <ToastStack toasts={toasts} />
+    </>
+  );
+}
+
+export default function MatchPage() {
+  const { id } = useParams();
+  return <MatchSession key={id} matchId={Number(id)} />;
+}

@@ -50,6 +50,18 @@ describe('buildHarnessRun', () => {
     expect(run.stdin).not.toMatch(/expected/i);
   });
 
+  it('turns console capture off for hidden-test runs', () => {
+    const run = buildHarnessRun({
+      language: 'javascript',
+      code: 'x',
+      functionName: 'f',
+      inputs,
+      timeLimitMs: 1000,
+      captureLogs: false,
+    });
+    expect(JSON.parse(run.stdin).maxLogBytes).toBe(0);
+  });
+
   it('rejects unsupported languages and unsafe function names', () => {
     const base = { code: 'x', inputs, timeLimitMs: 1000 };
     expect(() => buildHarnessRun({ ...base, language: 'ruby', functionName: 'f' })).toThrow(

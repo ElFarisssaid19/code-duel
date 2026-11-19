@@ -2,6 +2,7 @@ import http from 'node:http';
 import { env } from './config/env.js';
 import { app } from './app.js';
 import { prisma } from './lib/prisma.js';
+import { createMatchRepository } from './services/match/matchRepository.js';
 import { initSocket } from './socket/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -17,6 +18,14 @@ server.on('error', (err) => {
   }
   process.exit(1);
 });
+
+// Live match state is in memory only: matches left over from a previous run can't continue.
+try {
+  const { count } = await createMatchRepository().cancelStaleMatches();
+  if (count > 0) console.log(`[match] cancelled ${count} unfinished match(es) from a previous run`);
+} catch (err) {
+  console.error('[match] could not cancel stale matches:', err.message);
+}
 
 server.listen(env.PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${env.PORT} (${env.NODE_ENV})`);
@@ -36,6 +45,7 @@ async function shutdown(signal) {
   forceExit.unref();
 
   try {
+    io.matchManager.shutdown(); // stop match timers
     await io.close(); // disconnects all sockets and closes the HTTP server
     await prisma.$disconnect();
     console.log('Shutdown complete.');

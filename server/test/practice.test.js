@@ -183,3 +183,49 @@ it('uses the logged-in user for the submission', async () => {
     (await prisma.submission.findUnique({ where: { id: res.body.submission.id } })).userId,
   ).toBe(user.id);
 });
+
+describe('judge hardening: samples and hidden tests run in separate executions', () => {
+  // Attacker code: reads stdin, scans the interpreter's memory for argument lists, prints and
+  // returns everything it finds, and raises with it.
+  const memoryDumpPython = `import gc, sys
+def add(a, b):
+    print("stdin:", repr(sys.stdin.read()))
+    found = [o for o in gc.get_objects() if isinstance(o, list) and o and all(isinstance(x, list) for x in o)]
+    print("memory:", found)
+    if a == 10:
+        raise ValueError("dump: " + repr(found))
+    return found
+`;
+  // Escapes the vm context through a host function to reach the real process and fs.
+  const escapeJavascript = `function add(a, b) {
+  const host = console.log.constructor('return this')();
+  const proc = host.process;
+  const fs = proc.mainModule.require('fs');
+  let stdin = '';
+  try { stdin = fs.readFileSync(0, 'utf8'); } catch (e) { stdin = 'read failed: ' + e.code; }
+  console.log('escaped:', typeof proc.pid, 'stdin:', JSON.stringify(stdin));
+  console.log('files:', fs.readdirSync('.').join(','));
+  return a + b;
+}`;
+
+  it('python code that prints stdin and its whole memory never leaks hidden inputs', async () => {
+    const res = await submit({ language: 'python', code: memoryDumpPython });
+
+    expect(res.status).toBe(200);
+    const [sample0, sample1] = res.body.result.tests;
+    expect(sample0.logs).toContain("stdin: ''"); // stdin was consumed by the harness
+    expect(sample0.logs).toContain('[[1, 2], [10, -4]]'); // the memory scan works: it finds the SAMPLE inputs
+    expect(sample1.error).toContain('dump:');
+    expectNoHiddenData(res.body);
+    expect(await prisma.submission.count()).toBe(1);
+  });
+
+  it('javascript code that escapes the vm and reads stdin never leaks hidden inputs', async () => {
+    const res = await submit({ language: 'javascript', code: escapeJavascript });
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.tests[0].logs).toContain('escaped: number');
+    expect(res.body.result.status).toBe('ACCEPTED');
+    expectNoHiddenData(res.body);
+  });
+});

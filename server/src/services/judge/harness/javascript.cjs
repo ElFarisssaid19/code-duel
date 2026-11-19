@@ -38,7 +38,7 @@ function emit(record) {
 let logs = '';
 let logsFull = false;
 function writeLog(...args) {
-  if (logsFull) return;
+  if (logsFull || maxLogBytes <= 0) return;
   const line = `${args
     .map((arg) => (typeof arg === 'string' ? arg : util.inspect(arg, { depth: 4 })))
     .join(' ')}\n`;

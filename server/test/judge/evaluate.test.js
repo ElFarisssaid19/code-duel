@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { evaluateSolution, parseRecords, runBudgetMs } from '../../src/services/judge/evaluate.js';
+import {
+  combineVerdicts,
+  evaluateSolution,
+  parseRecords,
+  runBudgetMs,
+} from '../../src/services/judge/evaluate.js';
 import { RESULTS_FILE } from '../../src/services/judge/harness.js';
 
 const tests = [
@@ -191,5 +196,119 @@ describe('parseRecords / runBudgetMs', () => {
     expect(runBudgetMs(2000, 8)).toBe(17_000);
     expect(runBudgetMs(2000, 50)).toBe(20_000);
     expect(runBudgetMs(1000, 0)).toBe(2000);
+  });
+});
+
+describe('combineVerdicts (separate sample / hidden executions)', () => {
+  const sampleVerdict = {
+    status: 'ACCEPTED',
+    passed: 2,
+    total: 2,
+    timeMs: 30,
+    memoryKb: 9000,
+    tests: [
+      {
+        index: 0,
+        status: 'ACCEPTED',
+        input: [1],
+        expected: 1,
+        actual: 1,
+        error: null,
+        logs: 'hi',
+        timeMs: 1,
+      },
+      {
+        index: 1,
+        status: 'ACCEPTED',
+        input: [2],
+        expected: 2,
+        actual: 2,
+        error: null,
+        logs: '',
+        timeMs: 1,
+      },
+    ],
+  };
+  const hiddenVerdict = {
+    status: 'WRONG_ANSWER',
+    passed: 1,
+    total: 2,
+    timeMs: 40,
+    memoryKb: 12000,
+    tests: [
+      {
+        index: 0,
+        status: 'ACCEPTED',
+        input: ['zq-secret'],
+        expected: 'zq-secret',
+        actual: 'zq-secret',
+        error: null,
+        logs: 'zq-secret',
+        timeMs: 2,
+      },
+      {
+        index: 1,
+        status: 'WRONG_ANSWER',
+        input: ['zq-secret'],
+        expected: 'x',
+        actual: 'zq-secret',
+        error: 'zq-secret',
+        logs: 'zq-secret',
+        timeMs: 3,
+      },
+    ],
+  };
+
+  it('keeps sample details, reduces hidden tests to status/time, continues indices', () => {
+    const v = combineVerdicts(sampleVerdict, hiddenVerdict);
+    expect(v).toMatchObject({
+      status: 'WRONG_ANSWER',
+      passed: 3,
+      total: 4,
+      timeMs: 70,
+      memoryKb: 12000,
+    });
+    expect(v.tests[0]).toMatchObject({ index: 0, hidden: false, logs: 'hi', input: [1] });
+    expect(v.tests.slice(2)).toEqual([
+      { index: 2, hidden: true, status: 'ACCEPTED', timeMs: 2 },
+      { index: 3, hidden: true, status: 'WRONG_ANSWER', timeMs: 3 },
+    ]);
+    expect(JSON.stringify(v)).not.toContain('zq-secret');
+  });
+
+  it('uses the sample run for compile errors and hides infrastructure details', () => {
+    const compile = {
+      status: 'COMPILE_ERROR',
+      passed: 0,
+      total: 2,
+      compileError: 'SyntaxError',
+      tests: [],
+    };
+    expect(combineVerdicts(compile, { ...compile, total: 2 })).toMatchObject({
+      status: 'COMPILE_ERROR',
+      total: 4,
+      compileError: 'SyntaxError',
+      tests: [],
+    });
+
+    const crashed = { status: 'MEMORY_LIMIT_EXCEEDED', passed: 0, total: 2, tests: [] };
+    const v = combineVerdicts(sampleVerdict, crashed);
+    expect(v.tests.slice(2).map((t) => t.status)).toEqual([
+      'MEMORY_LIMIT_EXCEEDED',
+      'MEMORY_LIMIT_EXCEEDED',
+    ]);
+
+    const internal = combineVerdicts(sampleVerdict, {
+      status: 'INTERNAL_ERROR',
+      passed: 0,
+      total: 2,
+      error: 'go-judge down',
+      tests: [],
+    });
+    expect(internal).toMatchObject({ status: 'INTERNAL_ERROR', tests: [] });
+  });
+
+  it('is a no-op without hidden tests', () => {
+    expect(combineVerdicts(sampleVerdict, null).tests.every((t) => t.hidden === false)).toBe(true);
   });
 });

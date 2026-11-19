@@ -31,10 +31,26 @@ enum SubmissionStatus {
   INTERNAL_ERROR
 }
 
+/// WAITING (players found, connecting) → COUNTDOWN (3 s) → ACTIVE → FINISHED | CANCELLED
 enum MatchStatus {
   WAITING
+  COUNTDOWN
   ACTIVE
   FINISHED
+  CANCELLED
+}
+
+/// RANKED: matchmaking queue, updates ELO. PRIVATE: room code / invite link, unranked.
+enum MatchMode {
+  RANKED
+  PRIVATE
+}
+
+enum MatchEndReason {
+  SOLVED
+  TIMEOUT
+  FORFEIT
+  DISCONNECT
   CANCELLED
 }
 
@@ -91,15 +107,37 @@ model TestCase {
 }
 
 model Match {
-  id        Int         @id @default(autoincrement())
-  player1Id Int
-  player2Id Int
-  problemId Int
-  winnerId  Int?
-  status    MatchStatus @default(WAITING)
-  /// Elo points transferred to the winner; null until the match is finished.
-  eloChange Int?
+  id         Int             @id @default(autoincrement())
+  mode       MatchMode       @default(RANKED)
+  status     MatchStatus     @default(WAITING)
+  endReason  MatchEndReason?
+  /// Private room code (null for ranked matches)
+  roomCode   String?         @db.VarChar(6)
+  player1Id  Int
+  player2Id  Int
+  problemId  Int
+  /// null on a draw or while the match isn't finished
+  winnerId   Int?
+  /// Match length (by difficulty: EASY 10 min, MEDIUM 15 min, HARD 20 min)
+  durationMs Int
+  /// Number of tests (samples + hidden) of the problem
+  testCount  Int
+
+  /// ELO of each player when the match was created
+  player1Elo       Int
+  player2Elo       Int
+  /// ELO change applied when the match ended (ranked only; null otherwise)
+  player1EloChange Int?
+  player2EloChange Int?
+  /// Best number of tests passed, and when that count was first reached (timeout tiebreak)
+  player1Passed    Int       @default(0)
+  player2Passed    Int       @default(0)
+  player1ReachedAt DateTime?
+  player2ReachedAt DateTime?
+
+  createdAt DateTime  @default(now())
   startedAt DateTime?
+  endsAt    DateTime?
   endedAt   DateTime?
 
   // Match history is kept: users/problems with matches cannot be deleted.
@@ -109,8 +147,8 @@ model Match {
   problem     Problem      @relation(fields: [problemId], references: [id], onDelete: Restrict)
   submissions Submission[]
 
-  @@index([player1Id])
-  @@index([player2Id])
+  @@index([player1Id, createdAt])
+  @@index([player2Id, createdAt])
   @@index([problemId])
   @@index([winnerId])
   @@index([status])

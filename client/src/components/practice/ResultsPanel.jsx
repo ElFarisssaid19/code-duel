@@ -12,7 +12,7 @@ function TestTab({ test, active, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition ${
+      className={`relative inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition ${
         active
           ? 'bg-zinc-800 text-zinc-100'
           : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'

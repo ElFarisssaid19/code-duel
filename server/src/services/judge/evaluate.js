@@ -154,6 +154,7 @@ export async function evaluateSolution({
   tests,
   timeLimitMs,
   memoryLimitMb = 256,
+  captureLogs = true,
   runCode,
 }) {
   const run = buildHarnessRun({
@@ -162,6 +163,7 @@ export async function evaluateSolution({
     functionName,
     inputs: tests.map((t) => t.input),
     timeLimitMs,
+    captureLogs,
   });
   const raw = await runCode({
     language,
@@ -173,4 +175,61 @@ export async function evaluateSolution({
   });
   const records = parseRecords(raw.files?.[RESULTS_FILE]);
   return buildVerdict({ raw, records, tests, timeLimitMs });
+}
+
+/**
+ * Merges the verdicts of the two separate executions of a submission: sample tests (full
+ * details) and hidden tests. Hidden tests are reduced to { index, hidden, status, timeMs } HERE,
+ * so their inputs, expected/actual outputs, logs and errors never leave the judge service.
+ * Indices continue after the samples.
+ */
+export function combineVerdicts(samples, hidden) {
+  const sampleTests = samples.tests.map((t) => ({ ...t, hidden: false }));
+  if (!hidden) return { ...samples, tests: sampleTests };
+
+  const total = samples.total + hidden.total;
+  const base = {
+    total,
+    timeMs: (samples.timeMs ?? 0) + (hidden.timeMs ?? 0),
+    memoryKb: Math.max(samples.memoryKb ?? 0, hidden.memoryKb ?? 0),
+  };
+
+  if (samples.status === STATUS.INTERNAL_ERROR || hidden.status === STATUS.INTERNAL_ERROR) {
+    // Internal errors come from the judge infrastructure, not user code; logged server-side only.
+    const error = samples.status === STATUS.INTERNAL_ERROR ? samples.error : hidden.error;
+    return { ...base, status: STATUS.INTERNAL_ERROR, passed: 0, error, tests: [] };
+  }
+  if (samples.status === STATUS.COMPILE_ERROR) {
+    // Syntax errors only depend on the code, so the sample run's message is safe to show.
+    return {
+      ...base,
+      status: STATUS.COMPILE_ERROR,
+      passed: 0,
+      compileError: samples.compileError,
+      tests: [],
+    };
+  }
+
+  const hiddenTests =
+    hidden.tests.length > 0
+      ? hidden.tests.map((t) => ({
+          index: samples.total + t.index,
+          hidden: true,
+          status: t.status,
+          timeMs: t.timeMs,
+        }))
+      : Array.from({ length: hidden.total }, (_, i) => ({
+          index: samples.total + i,
+          hidden: true,
+          status: hidden.status,
+          timeMs: null,
+        }));
+  const tests = [...sampleTests, ...hiddenTests];
+  const firstFailure = tests.find((t) => t.status !== STATUS.ACCEPTED);
+  return {
+    ...base,
+    status: firstFailure ? firstFailure.status : STATUS.ACCEPTED,
+    passed: tests.filter((t) => t.status === STATUS.ACCEPTED).length,
+    tests,
+  };
 }

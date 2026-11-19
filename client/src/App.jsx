@@ -3,18 +3,22 @@ import { Navigate, Route, Routes } from 'react-router';
 import FullPageSpinner from '@/components/FullPageSpinner.jsx';
 import GuestRoute from '@/components/GuestRoute.jsx';
 import ProtectedRoute from '@/components/ProtectedRoute.jsx';
+import { usePlaySession } from '@/hooks/usePlaySession.js';
 import { useSocketLifecycle } from '@/hooks/useSocketLifecycle.js';
 import HomePage from '@/pages/HomePage.jsx';
+import JoinRoomPage from '@/pages/JoinRoomPage.jsx';
 import LoginPage from '@/pages/LoginPage.jsx';
 import ProblemsPage from '@/pages/ProblemsPage.jsx';
 import RegisterPage from '@/pages/RegisterPage.jsx';
 import StatusPage from '@/pages/StatusPage.jsx';
 
-// The practice page bundles Monaco (several MB): load it only when needed.
+// These pages bundle Monaco (several MB): load them only when needed.
 const PracticePage = lazy(() => import('@/pages/PracticePage.jsx'));
+const MatchPage = lazy(() => import('@/pages/MatchPage.jsx'));
 
 export default function App() {
   useSocketLifecycle();
+  usePlaySession();
 
   return (
     <Routes>
@@ -29,6 +33,15 @@ export default function App() {
             </Suspense>
           }
         />
+        <Route
+          path="/match/:id"
+          element={
+            <Suspense fallback={<FullPageSpinner />}>
+              <MatchPage />
+            </Suspense>
+          }
+        />
+        <Route path="/join/:code" element={<JoinRoomPage />} />
       </Route>
       <Route element={<GuestRoute />}>
         <Route path="/login" element={<LoginPage />} />

@@ -44,7 +44,7 @@ class LogBuffer(io.TextIOBase):
 
     def write(self, text):
         text = str(text)
-        if self.full:
+        if self.full or self.max_bytes <= 0:
             return len(text)
         data = text.encode("utf-8", "replace")
         if self.size + len(data) > self.max_bytes:

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import Button from '@/components/Button.jsx';
-import DifficultyBadge from '@/components/DifficultyBadge.jsx';
 import FullPageSpinner from '@/components/FullPageSpinner.jsx';
 import CodeEditor from '@/components/practice/CodeEditor.jsx';
+import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
+import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
 import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
-import TestInput from '@/components/practice/TestInput.jsx';
-import ValueBlock from '@/components/practice/ValueBlock.jsx';
-import { formatValue, paramNames } from '@/components/practice/params.js';
+import { paramNames } from '@/components/practice/params.js';
+import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { api } from '@/lib/api.js';
-import { renderMarkdown } from '@/lib/markdown.js';
 import { loadItem, removeItem, saveItem } from '@/lib/storage.js';
 import { LANGUAGES } from '@/lib/verdicts.js';
 
@@ -20,40 +19,6 @@ const FILE_EXTENSIONS = { javascript: 'js', python: 'py' };
 function initialLanguage() {
   const saved = loadItem(LANGUAGE_KEY);
   return LANGUAGES.some((l) => l.id === saved) ? saved : 'javascript';
-}
-
-function ProblemStatement({ problem, params }) {
-  return (
-    <div className="space-y-6 p-5 lg:p-6">
-      <div className="space-y-2">
-        <h1 className="text-xl font-bold tracking-tight">{problem.title}</h1>
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
-          <DifficultyBadge difficulty={problem.difficulty} />
-          <span>Time limit: {problem.timeLimitMs} ms per test</span>
-        </div>
-      </div>
-
-      {/* Sanitized with DOMPurify in renderMarkdown */}
-      <div
-        className="markdown"
-        dangerouslySetInnerHTML={{ __html: renderMarkdown(problem.description) }}
-      />
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-zinc-100">Sample tests</h2>
-        {problem.samples.map((sample) => (
-          <div
-            key={sample.index}
-            className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4"
-          >
-            <p className="text-xs font-medium text-zinc-400">Case {sample.index + 1}</p>
-            <TestInput input={sample.input} params={params} />
-            <ValueBlock label="Expected">{formatValue(sample.expected)}</ValueBlock>
-          </div>
-        ))}
-      </section>
-    </div>
-  );
 }
 
 function Workspace({ problem }) {
@@ -120,18 +85,7 @@ function Workspace({ problem }) {
   const run = useCallback(() => execute('run'), [execute]);
   const submit = useCallback(() => execute('submit'), [execute]);
 
-  // Shortcuts when the focus is outside the editor (the editor registers its own).
-  useEffect(() => {
-    function onKeyDown(event) {
-      if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return;
-      if (event.target.closest?.('.monaco-editor')) return;
-      event.preventDefault();
-      if (event.shiftKey) submit();
-      else run();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [run, submit]);
+  useRunShortcuts(run, submit);
 
   return (
     <div className="flex flex-col lg:h-screen">
@@ -143,22 +97,7 @@ function Workspace({ problem }) {
           {problem.title}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor="language">
-            Language
-          </label>
-          <select
-            id="language"
-            value={language}
-            onChange={(e) => changeLanguage(e.target.value)}
-            disabled={Boolean(running)}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500"
-          >
-            {LANGUAGES.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.label}
-              </option>
-            ))}
-          </select>
+          <LanguageSelect value={language} onChange={changeLanguage} disabled={Boolean(running)} />
           <Button
             variant="secondary"
             onClick={resetCode}
@@ -189,13 +128,13 @@ function Workspace({ problem }) {
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section
-          className="min-h-0 overflow-y-auto border-zinc-800 lg:border-r"
+          className="min-h-0 min-w-0 overflow-y-auto border-zinc-800 lg:border-r"
           aria-label="Problem"
         >
           <ProblemStatement problem={problem} params={params} />
         </section>
 
-        <section className="flex min-h-0 flex-col" aria-label="Editor and results">
+        <section className="flex min-h-0 min-w-0 flex-col" aria-label="Editor and results">
           <div className="h-[420px] min-h-0 border-b border-zinc-800 lg:h-auto lg:flex-[3]">
             <CodeEditor
               path={`${slug}/solution.${FILE_EXTENSIONS[language]}`}

@@ -4,8 +4,8 @@ Real-time 1v1 coding battles. Two players get the same problem, write code in th
 the first correct solution wins. Code runs in a sandbox (go-judge) and results update live over
 WebSockets. Players get Elo ratings.
 
-> **Status:** Phase 2 is done: authentication, problems, sandboxed code execution and solo
-> practice. 1v1 matchmaking and live duels aren't built yet.
+> **Status:** Phase 3 is done: authentication, problems, sandboxed code execution, solo practice,
+> and real-time 1v1 duels (ranked matchmaking with ELO, and private rooms).
 
 ## Tech stack
 
@@ -53,7 +53,7 @@ npm run dev
 ```
 
 Open <http://localhost:5173>. You'll land on **/login**: create an account and you're taken to
-the home page. **Practice problems** opens the problem list; each problem has an editor where you
+the home page, where you can **Play ranked**, create or join a **private room**, or practice. **Practice problems** opens the problem list; each problem has an editor where you
 can run the samples and submit. The dev dashboard at <http://localhost:5173/dev/status> shows the
 API, database, judge, session and socket state (the socket only connects while you're logged in).
 
@@ -199,7 +199,9 @@ The Socket.io handshake is authenticated with the same cookie
 (`server/src/socket/authMiddleware.js`). Unauthenticated connections are rejected with a
 `connect_error` whose `message` is `Unauthorized: …` and whose `data` is
 `{ code: 'UNAUTHORIZED', message }`. Accepted sockets have `socket.data.user` (public fields), and
-the server emits a `session` event with `{ user }` right after connecting.
+the server emits a `session` event with `{ user }` right after connecting. Each socket joins a
+per-user room (`user:<id>`), so server events reach all of a user's tabs. Duel events are listed
+in [Socket events](#socket-events).
 
 ### Client
 
@@ -214,14 +216,22 @@ the server emits a `session` event with `{ user }` right after connecting.
 
 The server test suite (Vitest + supertest + socket.io-client) has three layers:
 
-- **Unit tests** (`test/judge/*.test.js` except the integration file): output comparison, go-judge
-  status mapping and request units, harness generation, verdict building. The judge provider is
-  mocked.
+- **Unit tests**: output comparison, go-judge status mapping and request units, harness generation,
+  verdict building and sample/hidden merging (`test/judge/`). Also duels (`test/match/`), using
+  Vitest fake timers, a fake repository and a mocked judge: win by solve, timeout rules and
+  tiebreak, draw, forfeit, disconnect grace / reconnect / timeout, one activity per user, no
+  self-play, unranked private rooms, ELO math, matchmaking window, room expiry, rematch, and
+  server-start cleanup (against the test DB).
 - **Judge integration tests** (`test/judge/judge.integration.test.js`): against the **real
   go-judge container**, in JavaScript and Python. They cover accepted, wrong answer, syntax error,
   runtime error, infinite loop, huge allocation, blocked network, and no access to host files.
 - **API tests**: auth, sockets, problems and practice. They check that hidden test data never
-  appears in any response, the run/submit rate limit, and saved submissions.
+  appears in any response, even when user code prints stdin, dumps its memory or escapes the JS
+  `vm`. They also cover the run/submit rate limit and saved submissions.
+- **Duel integration tests** (`test/match/duel.integration.test.js`): two real socket.io-client
+  connections against the real server, MySQL and go-judge. Covers a full ranked match with ELO in
+  the DB, a private room with rematch, rejoin after a disconnect, the disconnect loss, and a scan
+  of every event and ack payload proving hidden test data never appears.
 
 ```bash
 cp server/.env.test.example server/.env.test   # once; set the same DB password as server/.env
@@ -298,7 +308,13 @@ POST /api/practice/:slug/run|submit
   runs inside the sandbox. It reads the inputs from stdin before any user code loads, calls the
   function once per test with that test's arguments, and writes one JSON line per test (actual
   value, error, console output as "logs", time) to a results file that the provider collects.
-- **All tests run in one sandbox execution.** Each test has its own time limit inside the harness
+- **Samples and hidden tests run in separate sandbox executions** (`judgeSubmission`, in
+  parallel). The hidden execution only receives hidden inputs and captures no logs, and its
+  results are reduced to `{ index, status, timeMs }` inside the judge service. So nothing user code
+  prints, returns or raises while it can see hidden inputs can reach a client, and sample logs
+  can't contain hidden inputs. This applies to practice submit and to duels; "run" only executes
+  samples.
+- **All tests of one execution run in a single sandbox process.** Each test has its own time limit inside the harness
   (a `vm` timeout in JS, `SIGALRM` in Python), so an infinite loop or a thrown error in one test
   doesn't stop the others. If the process is killed (memory, or the whole-run CPU cap), the test
   in progress gets that status and the rest are `SKIPPED`.
@@ -308,9 +324,109 @@ POST /api/practice/:slug/run|submit
   `MEMORY_LIMIT_EXCEEDED`, `COMPILE_ERROR` (syntax errors, both languages), `INTERNAL_ERROR`, and
   `SKIPPED` (per test). The submission verdict is the first non-accepted test's status.
 - **Known limitation (TODO in both harnesses):** user code runs in the same process as the harness,
-  so it could forge result lines or read other tests' inputs. The sandbox still contains it (no
-  network, no host files, all limits apply), but a determined user could fake a verdict. Planned
-  hardening: one sandbox process per test, or signed result lines.
+  so it could forge result lines (fake a verdict). Thanks to the separate executions it can only
+  read inputs of its own kind (sample code sees samples, hidden code sees hidden inputs but can't
+  output anything). The sandbox contains it either way (no network, no host files, all limits
+  apply). Planned hardening: one sandbox process per test, or signed result lines.
+
+## Duels
+
+Two players get the same problem; the server judges both with the same judge as practice.
+
+### Match rules
+
+| Rule                | Details                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Modes               | **RANKED**: matchmaking queue, updates ELO, wins/losses/draws. **PRIVATE**: room code or invite link, **unranked** (no ELO or W/L/D change, so no ELO farming with friends).                                                                                                                                                                       |
+| One thing at a time | A user can be in only one queue, room or match, across all tabs (`ALREADY_BUSY`). Nobody can play against themselves.                                                                                                                                                                                                                              |
+| States              | `WAITING` (both players found; waiting for both clients to join, max 30 s, otherwise `CANCELLED`) → `COUNTDOWN` (3 s) → `ACTIVE` → `FINISHED` or `CANCELLED`. Persisted on the `Match` row with `mode`, `endReason`, timings, ELO before/after and best progress.                                                                                  |
+| Duration            | EASY 10 min, MEDIUM 15 min, HARD 20 min. **The server owns every timer**; clients only display `endsAt` (corrected for clock skew with `serverNow`).                                                                                                                                                                                               |
+| Problem             | Avoids problems either player saw in their last 5 matches when possible. Ranked difficulty from the average ELO: < 1100 EASY, < 1300 EASY or MEDIUM, otherwise MEDIUM or HARD (falls back to any difficulty if none exist). Private: the host picks EASY / MEDIUM / HARD / ANY.                                                                    |
+| Languages           | Each player picks JavaScript or Python and can switch at any time.                                                                                                                                                                                                                                                                                 |
+| Run / submit        | `match:run` judges the samples only (no effect on progress). `match:submit` judges everything (samples and hidden in separate executions), counts an attempt, and is saved as a `Submission` with `matchId`. Together: 1 request per 3 s per player.                                                                                               |
+| Winning             | First to pass **all** tests wins immediately (`SOLVED`). On **timeout**: most tests passed wins; if equal, whoever reached that count first; if both have 0, a draw (`TIMEOUT`). **Forfeit**: the other player wins (`FORFEIT`). **Disconnect**: 30 s grace to reconnect while the match keeps running, then the other player wins (`DISCONNECT`). |
+| ELO                 | Ranked only. K = 32, expected score `1 / (1 + 10^((Rb − Ra) / 400))`, rounded, zero-sum (`server/src/services/elo.js`). Both users' ELO and W/L/D and the match row are updated in **one transaction**.                                                                                                                                            |
+| Restart             | On server start, every `WAITING`/`COUNTDOWN`/`ACTIVE` match in the DB is marked `CANCELLED` (live state is in memory only).                                                                                                                                                                                                                        |
+
+### Matchmaking
+
+`server/src/services/match/matchmaker.js`, ticking every second:
+
+- Each queued player has an ELO window that starts at **±100** and widens by **50 every 5 s**, up to
+  **±500**. After **60 s** they can be paired with anyone.
+- Two players are compatible when their ELO difference fits the **wider** of their two windows.
+- Oldest players are served first, each paired with the closest-rated compatible player.
+- Leaving the queue, disconnecting or closing the last tab removes the player. Waiting players
+  get `queue:status { elapsedMs, window }` every second.
+- The queue sits behind a small store interface (`add / remove / get / has / list`), so the
+  in-memory store can be replaced by Redis.
+
+### Private rooms and rematch
+
+- Room codes are 6 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), case-insensitive.
+  Rooms expire after **10 minutes** without a second player, and survive a host page refresh.
+- Invite link: `/join/<code>`. A logged-out visitor logs in (or registers) first and is sent back.
+- After a private match, either player can request a **rematch**; it starts when both accept
+  (within 2 minutes), with a new problem of the same difficulty.
+
+### Reconnecting
+
+On refresh or network loss, the client emits `match:rejoin` again on every (re)connect and gets a
+full `match:state` snapshot (status, problem, `endsAt`, remaining time, both players' progress,
+result). The code is autosaved in `localStorage` per match and language. Opening the app with a
+live match redirects to it.
+
+### Socket events
+
+All request/response events use acknowledgement callbacks and answer
+`{ ok: true, data }` or `{ ok: false, error: { code, message } }`. Every payload is validated with zod
+(`server/src/validators/match.schemas.js`).
+
+| Client → server              | Payload                                                 | Ack data                                                                                           |
+| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `state:get`                  | none                                                    | `{ type: 'idle' \| 'queue' \| 'room' \| 'match', … }`: restores the UI / redirects to a live match |
+| `queue:join` / `queue:leave` | none                                                    | `{ status, elapsedMs?, window? }`                                                                  |
+| `room:create`                | `{ difficulty: 'EASY' \| 'MEDIUM' \| 'HARD' \| 'ANY' }` | room `{ code, difficulty, status, players, expiresAt }`                                            |
+| `room:join`                  | `{ code }`                                              | `{ code, matchId }`                                                                                |
+| `room:leave`                 | none                                                    | `{ status: 'idle' }`                                                                               |
+| `match:rejoin`               | `{ matchId }`                                           | full snapshot (also emitted as `match:state`)                                                      |
+| `match:run`                  | `{ language, code }`                                    | `{ matchId, result }`: samples only                                                                |
+| `match:submit`               | `{ language, code }`                                    | `{ matchId, result, submission, progress }`: same `result` shape as practice submit                |
+| `match:forfeit`              | none                                                    | `{ matchId }`                                                                                      |
+| `match:activity`             | none (fire and forget, throttled)                       | none                                                                                               |
+| `rematch:request`            | `{ matchId? }`                                          | `{ matchId, status, requestedBy, newMatchId? }`                                                    |
+
+| Server → client                            | Payload                                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `queue:status`                             | `{ status: 'searching', elapsedMs, window }` (`window: null` = anyone) or `{ status: 'idle' }`             |
+| `room:update`                              | `{ code, difficulty, status: 'open' \| 'starting' \| 'closed', players, expiresAt, reason? }`              |
+| `match:found`                              | `{ matchId, mode }`                                                                                        |
+| `match:countdown`                          | `{ matchId, startsAt, serverNow }`                                                                         |
+| `match:start`                              | `{ matchId, problem (samples only), endsAt, serverNow, me, opponent: { username, elo, … } }`               |
+| `match:state`                              | snapshot on rejoin: status, problem, `endsAt`, `remainingMs`, `me`, `opponent`, result, rematch            |
+| `match:run:result` / `match:submit:result` | same payload as the ack (sent to all of the player's tabs)                                                 |
+| `opponent:progress`                        | `{ userId, passed, total, attempts }`                                                                      |
+| `opponent:activity`                        | `{ at }`: "opponent is typing"                                                                             |
+| `opponent:connection`                      | `{ connected, graceEndsAt? }`                                                                              |
+| `match:end`                                | `{ matchId, mode, winnerId, reason, eloChanges: { [userId]: { before, after, delta } } \| null, summary }` |
+| `rematch:update`                           | `{ matchId, status: 'pending' \| 'accepted' \| 'expired' \| 'cancelled', requestedBy }`                    |
+| `match:error`                              | `{ code, message }`: a match couldn't be created after pairing                                             |
+
+Hidden test inputs, expected outputs, logs and errors never appear in any event or ack (the
+integration test scans all of them).
+
+### Testing a duel locally with two accounts
+
+1. `npm run infra:up && npm run db:migrate && npm run db:seed && npm run dev`
+2. Open <http://localhost:5173> in a normal window and register **player one**.
+3. Open a **private/incognito window** (separate cookies) and register **player two**.
+4. **Ranked:** click **Play ranked** in both windows. They're paired within a second (new accounts
+   are both 1000 ELO), then a 3 s countdown starts. Solve the problem in one window (the reference
+   solutions are in `server/prisma/seed/solutions/`).
+5. **Private:** click **Create private room** in one window, then type the code in **Join room** in
+   the other, or open the invite link (`/join/<code>`) there.
+6. **Reconnect:** refresh a window during a match: timer, progress and code come back. Close a
+   window for more than 30 s to lose by disconnect.
 
 ## Problems & practice API
 
@@ -357,11 +473,12 @@ code-duel/
 │   ├── vite.config.js         # Tailwind plugin, @ → src alias, /api + /socket.io proxy
 │   └── src/
 │       ├── components/        # ProtectedRoute, GuestRoute, badges, form + UI components
-│       │   └── practice/      # CodeEditor (Monaco), ResultsPanel, test value blocks
-│       ├── hooks/             # useApiForm, useHealth, useSocketLifecycle
+│       │   ├── practice/      # CodeEditor (Monaco), ResultsPanel, ProblemStatement, LanguageSelect
+│       │   └── match/         # timer, player progress, countdown, result modal
+│       ├── hooks/             # useApiForm, useHealth, useSocketLifecycle, usePlaySession, …
 │       ├── lib/               # api, socket, monaco (self-hosted), markdown, storage, verdicts
-│       ├── pages/             # Home, Login, Register, Problems, Practice (lazy), Status
-│       ├── store/             # authStore, connectionStore (Zustand)
+│       ├── pages/             # Home, Login, Register, Problems, Practice, Match (lazy), Join, Status
+│       ├── store/             # authStore, connectionStore, playStore (Zustand)
 │       ├── App.jsx            # routes
 │       ├── index.css          # Tailwind entry
 │       └── main.jsx
@@ -372,15 +489,16 @@ code-duel/
 │   │   └── seed/              # npm run db:seed: problems/, solutions/ (reference), index.js
 │   ├── prisma.config.js       # Prisma 7 config (schema path, DATABASE_URL)
 │   ├── vitest.config.js
-│   ├── test/                  # API + judge tests, setup (test DB, cleanup, go-judge check)
+│   ├── test/                  # API, judge and match tests; setup (test DB, cleanup, go-judge check)
 │   └── src/
 │       ├── config/env.js      # Zod-validated env
 │       ├── controllers/
 │       ├── routes/            # /api/health, /api/auth, /api/problems, /api/practice
 │       ├── middleware/        # errorHandler, notFound, requireAuth, rateLimit, validate
-│       ├── socket/            # Socket.io setup + cookie auth middleware
-│       ├── services/          # auth, problem, practice; elo, matchmaker (TODO stubs)
-│       │   └── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
+│       ├── socket/            # Socket.io setup, cookie auth, handlers/ (queue, room, match)
+│       ├── services/          # auth, problem, practice, elo
+│       │   ├── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
+│       │   └── match/         # MatchManager, matchmaker, problemPicker, roomCodes, matchRepository
 │       ├── validators/        # Zod request schemas
 │       ├── lib/               # prisma, jwt, authCookie, publicUser, errors
 │       ├── generated/prisma/  # generated Prisma client (gitignored)
