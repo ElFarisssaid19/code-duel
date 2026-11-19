@@ -4,7 +4,7 @@ Real-time 1v1 coding battles. Two players get the same problem, write code in th
 the first correct solution wins. Code runs in a sandbox (Judge0) and results update live over
 WebSockets. Players get Elo ratings.
 
-> **Status:** development environment only. Auth, matchmaking and game logic aren't built yet.
+> **Status:** Phase 1 (authentication) is done. Matchmaking and game logic aren't built yet.
 
 ## Tech stack
 
@@ -14,6 +14,8 @@ WebSockets. Players get Elo ratings.
 | Server  | Node.js 24, Express 5, Socket.io 4, Prisma 7 (MariaDB driver adapter), Zod 4        |
 | Data    | MySQL 8.4 (Docker)                                                                  |
 | Judge   | Judge0 CE 1.13.1 (Docker, needs cgroup v1, see [Judge0 setup](#judge0-setup))       |
+| Auth    | bcryptjs, JWT (jose) in an httpOnly cookie, express-rate-limit                      |
+| Testing | Vitest, supertest, socket.io-client                                                 |
 | Tooling | npm workspaces, ESLint 10 (flat config), Prettier 3, concurrently                   |
 
 ## Prerequisites
@@ -33,6 +35,7 @@ npm install
 cp infra/.env.example infra/.env          # MySQL credentials
 cp server/.env.example server/.env        # DATABASE_URL must match infra/.env
 cp client/.env.example client/.env.local  # optional, everything has a default
+cp server/.env.test.example server/.env.test  # only needed for `npm test`
 
 # 3. Start MySQL and wait until it's healthy
 npm run db:up
@@ -44,8 +47,9 @@ npm run db:migrate
 npm run dev
 ```
 
-Open <http://localhost:5173>. The status page should show **API ok**, **Database ok** and
-**Socket connected**.
+Open <http://localhost:5173>. You'll land on **/login**: create an account and you're taken to
+the home page. The dev dashboard at <http://localhost:5173/dev/status> shows the API, database,
+session and socket state (the socket only connects while you're logged in).
 
 Generate secrets with `openssl rand -hex 24` (DB passwords) and `openssl rand -hex 64`
 (`JWT_SECRET`). Use hex or other URL-safe characters for the MySQL password, because it is also
@@ -58,6 +62,7 @@ Run all of these from the repo root.
 | Script                 | What it does                                                         |
 | ---------------------- | -------------------------------------------------------------------- |
 | `npm run dev`          | Starts server (`node --watch`) and client (Vite) with `concurrently` |
+| `npm test`             | Server test suite (Vitest + supertest) against `code_duel_test`      |
 | `npm run lint`         | ESLint over the whole monorepo                                       |
 | `npm run lint:fix`     | ESLint with auto-fix                                                 |
 | `npm run format`       | Prettier: format every file                                          |
@@ -104,7 +109,113 @@ missing or invalid, the server exits with a clear error.
 | `JWT_SECRET`   | 32+ random characters                                                               |
 | `JUDGE0_URL`   | `http://localhost:2358`                                                             |
 
+**`server/.env.test`**: same variables, used only by `npm test`. `DATABASE_URL` must point to a
+database whose name ends in `_test` (default `code_duel_test`).
+
 **`client/.env.local`**: `VITE_API_URL` and `VITE_SOCKET_URL`. Leave both empty in development.
+
+## Authentication
+
+### Endpoints
+
+All under `/api/auth`. Bodies are JSON. Every user object contains only public fields:
+`id`, `username`, `email`, `elo`, `wins`, `losses`, `draws`, `createdAt`. `passwordHash` is
+never returned.
+
+| Method | Path        | Body                            | Success                         | Errors        |
+| ------ | ----------- | ------------------------------- | ------------------------------- | ------------- |
+| POST   | `/register` | `{ username, email, password }` | `201 { user }` + session cookie | 400, 409, 429 |
+| POST   | `/login`    | `{ identifier, password }`      | `200 { user }` + session cookie | 400, 401, 429 |
+| POST   | `/logout`   | none                            | `204`, clears the cookie        | none          |
+| GET    | `/me`       | none (needs the cookie)         | `200 { user }`                  | 401           |
+
+- `username`: 3–20 characters, letters, numbers and `_`. Unique, case-insensitive
+  (MySQL's default collation), so `Alice` and `alice` can't both exist.
+- `email`: valid address, trimmed and stored lowercased.
+- `password`: at least 8 characters and at most 72 bytes (bcrypt ignores anything past 72 bytes,
+  so longer passwords are rejected instead of silently truncated). Hashed with bcryptjs, cost 12.
+- `identifier`: a username or an email (anything containing `@` is treated as an email).
+- `/register` and `/login` are rate-limited to **10 requests per 15 minutes per IP** (each route
+  counts separately, in memory, reset on server restart).
+
+### Error format
+
+Every error response has the same shape:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request data",
+    "details": { "username": ["Username must be at least 3 characters"] }
+  }
+}
+```
+
+| Status | `code`                | When                                                                             |
+| ------ | --------------------- | -------------------------------------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`    | Zod validation failed; `details` maps each field to its messages                 |
+| 400    | `INVALID_JSON`        | Malformed JSON body                                                              |
+| 401    | `INVALID_CREDENTIALS` | Wrong login. Same response whether or not the account exists                     |
+| 401    | `UNAUTHORIZED`        | Missing, invalid or expired session                                              |
+| 404    | `NOT_FOUND`           | Unknown route                                                                    |
+| 409    | `CONFLICT`            | Username or email taken, e.g. `details: { "email": ["Email is already taken"] }` |
+| 429    | `RATE_LIMITED`        | Too many login/register attempts                                                 |
+| 500    | `INTERNAL_ERROR`      | Anything unexpected (message hidden in production)                               |
+
+Throw `new HttpError(status, code, message, details?)` (`server/src/lib/errors.js`) from any route
+to produce one of these.
+
+### Sessions and cookies
+
+- On register/login the server signs a **JWT** (HS256, `JWT_SECRET`, subject = user id, expires
+  in **7 days**) and sets it in a cookie named **`token`**: `HttpOnly` (JavaScript can't read it,
+  which protects it from XSS), `SameSite=Lax` (not sent on cross-site POSTs, which blocks CSRF),
+  `Path=/`, `Max-Age` 7 days, and `Secure` only when `NODE_ENV=production` (so it works over
+  plain HTTP on localhost).
+- The browser sends the cookie automatically, so the client never handles the token. In
+  development, Vite proxies `/api` and `/socket.io`, so everything is same-origin.
+- `requireAuth` (`server/src/middleware/requireAuth.js`) verifies the cookie, loads the user from
+  the database and sets `req.user` (public fields). A deleted user's token stops working
+  immediately.
+- **Logout** clears the cookie. The JWT itself isn't revoked server-side (stateless sessions): a
+  copied token stays valid until it expires. Rotating `JWT_SECRET` logs everyone out.
+- Auth responses are sent with `Cache-Control: no-store`.
+
+### Socket.io
+
+The Socket.io handshake is authenticated with the same cookie
+(`server/src/socket/authMiddleware.js`). Unauthenticated connections are rejected with a
+`connect_error` whose `message` is `Unauthorized: …` and whose `data` is
+`{ code: 'UNAUTHORIZED', message }`. Accepted sockets have `socket.data.user` (public fields), and
+the server emits a `session` event with `{ user }` right after connecting.
+
+### Client
+
+- `store/authStore.js` (Zustand) holds `user` and `status` (`loading` → `authenticated` |
+  `guest`). `fetchMe()` runs once on app load, so the session survives a page refresh.
+- `ProtectedRoute` sends guests to `/login` (and back to the page they wanted after logging in).
+  `GuestRoute` sends logged-in users away from `/login` and `/register`.
+- `hooks/useSocketLifecycle.js` connects the socket only while authenticated and disconnects it
+  on logout.
+
+## Tests
+
+The server has an integration test suite (Vitest + supertest + socket.io-client) covering
+registration, validation, duplicates, login by username/email, wrong passwords, `/me`, logout,
+rate limiting, socket authentication, and that `passwordHash` never appears in a response.
+
+```bash
+cp server/.env.test.example server/.env.test   # once; set the same DB password as server/.env
+npm run db:up                                  # MySQL must be running
+npm test                                       # or: npm run test:watch -w server
+```
+
+- Tests use a separate database, **`code_duel_test`**. It's created and migrated automatically
+  (`prisma migrate deploy`) before the run; your dev data isn't touched.
+- Every table is emptied before each test, so the setup refuses to run unless the database name
+  ends in `_test`.
+- Test files run one at a time because they share the database.
 
 ## Judge0 setup
 
@@ -194,11 +305,11 @@ code-duel/
 │   ├── index.html
 │   ├── vite.config.js         # Tailwind plugin, @ → src alias, /api + /socket.io proxy
 │   └── src/
-│       ├── components/        # UI components (StatusCard)
-│       ├── hooks/             # useHealth, useSocketConnection
+│       ├── components/        # ProtectedRoute, GuestRoute, form + UI components
+│       ├── hooks/             # useApiForm, useHealth, useSocketLifecycle
 │       ├── lib/               # api.js (fetch wrapper), socket.js (shared socket)
-│       ├── pages/             # StatusPage ("/")
-│       ├── store/             # Zustand stores
+│       ├── pages/             # Home ("/"), Login, Register, Status ("/dev/status")
+│       ├── store/             # authStore, connectionStore (Zustand)
 │       ├── App.jsx            # routes
 │       ├── index.css          # Tailwind entry
 │       └── main.jsx
@@ -207,14 +318,17 @@ code-duel/
 │   │   ├── schema.prisma      # User, Problem, TestCase, Match, Submission
 │   │   └── migrations/
 │   ├── prisma.config.js       # Prisma 7 config (schema path, DATABASE_URL)
+│   ├── vitest.config.js
+│   ├── test/                  # integration tests + setup (test DB, cleanup)
 │   └── src/
 │       ├── config/env.js      # Zod-validated env
 │       ├── controllers/
-│       ├── routes/            # /api/health
-│       ├── middleware/        # errorHandler, notFound
-│       ├── socket/            # Socket.io setup
-│       ├── services/          # judge, elo, matchmaker (TODO stubs)
-│       ├── lib/prisma.js      # single Prisma client
+│       ├── routes/            # /api/health, /api/auth
+│       ├── middleware/        # errorHandler, notFound, requireAuth, rateLimit, validate
+│       ├── socket/            # Socket.io setup + cookie auth middleware
+│       ├── services/          # auth; judge, elo, matchmaker (TODO stubs)
+│       ├── validators/        # Zod request schemas
+│       ├── lib/               # prisma, jwt, authCookie, publicUser, errors
 │       ├── generated/prisma/  # generated Prisma client (gitignored)
 │       ├── app.js             # Express app
 │       └── index.js           # HTTP server + Socket.io + graceful shutdown

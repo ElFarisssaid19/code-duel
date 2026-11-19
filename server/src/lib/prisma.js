@@ -8,5 +8,6 @@ const adapter = new PrismaMariaDb(env.DATABASE_URL);
 /** Single shared Prisma client for the whole server process. */
 export const prisma = new PrismaClient({
   adapter,
-  log: env.isDev ? ['warn', 'error'] : ['error'],
+  // Query errors are thrown to the caller (and logged by errorHandler when they are 500s).
+  log: ['warn'],
 });

@@ -1,11 +1,13 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+/** Error thrown for failed requests. Mirrors the server shape { error: { code, message, details? } }. */
 export class ApiError extends Error {
-  constructor(message, { status = 0, data = null, cause } = {}) {
+  constructor(message, { status = 0, code = 'NETWORK_ERROR', details = null, cause } = {}) {
     super(message, { cause });
     this.name = 'ApiError';
     this.status = status;
-    this.data = data;
+    this.code = code;
+    this.details = details; // e.g. { username: ['Username is already taken'] }
   }
 }
 
@@ -27,15 +29,19 @@ export async function api(path, { body, headers, ...options } = {}) {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    throw new ApiError('Network error: could not reach the API', { cause: err });
+    throw new ApiError('Network error: could not reach the server', { cause: err });
   }
 
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const data = isJson ? await res.json().catch(() => null) : await res.text();
 
   if (!res.ok) {
-    const message = data?.error?.message ?? `Request failed with status ${res.status}`;
-    throw new ApiError(message, { status: res.status, data });
+    const error = data?.error ?? {};
+    throw new ApiError(error.message ?? `Request failed with status ${res.status}`, {
+      status: res.status,
+      code: error.code ?? 'HTTP_ERROR',
+      details: error.details ?? null,
+    });
   }
 
   return data;

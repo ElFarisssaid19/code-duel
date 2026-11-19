@@ -1,6 +1,7 @@
+import { Link } from 'react-router';
 import StatusCard from '@/components/StatusCard.jsx';
 import { useHealth } from '@/hooks/useHealth.js';
-import { useSocketConnection } from '@/hooks/useSocketConnection.js';
+import { useAuthStore } from '@/store/authStore.js';
 import { useConnectionStore } from '@/store/connectionStore.js';
 
 function formatUptime(seconds) {
@@ -10,15 +11,32 @@ function formatUptime(seconds) {
   return h ? `${h}h ${m}m` : m ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
+function socketDetail({ socketStatus, socketUser, socketError }, authStatus) {
+  if (socketStatus === 'connected') {
+    return socketUser ? `connected as @${socketUser.username}` : 'connected';
+  }
+  if (socketStatus === 'connecting') return 'connecting…';
+  if (authStatus === 'guest') return 'disconnected (log in to connect)';
+  return socketError ? `disconnected: ${socketError}` : 'disconnected';
+}
+
+/** Dev dashboard (public): API, database, session and socket state. */
 export default function StatusPage() {
-  useSocketConnection();
   const { data, error, loading } = useHealth();
-  const socketStatus = useConnectionStore((s) => s.socketStatus);
+  const authStatus = useAuthStore((s) => s.status);
+  const user = useAuthStore((s) => s.user);
+  const socketState = useConnectionStore();
 
   const apiState = loading ? 'pending' : error ? 'error' : 'ok';
   const dbState = loading ? 'pending' : data?.db === 'ok' ? 'ok' : 'error';
-  const socketState =
-    socketStatus === 'connected' ? 'ok' : socketStatus === 'connecting' ? 'pending' : 'error';
+  const authState =
+    authStatus === 'authenticated' ? 'ok' : authStatus === 'loading' ? 'pending' : 'error';
+  const socketIndicator =
+    socketState.socketStatus === 'connected' && socketState.socketUser
+      ? 'ok'
+      : socketState.socketStatus === 'disconnected'
+        ? 'error'
+        : 'pending';
 
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-8 px-4 py-12">
@@ -40,12 +58,26 @@ export default function StatusPage() {
           state={dbState}
           detail={loading ? 'checking…' : (data?.db ?? 'unknown')}
         />
-        <StatusCard label="Socket" state={socketState} detail={socketStatus} />
+        <StatusCard
+          label="Session"
+          state={authState}
+          detail={authStatus === 'authenticated' ? `@${user.username}` : authStatus}
+        />
+        <StatusCard
+          label="Socket"
+          state={socketIndicator}
+          detail={socketDetail(socketState, authStatus)}
+        />
       </section>
 
-      <footer className="text-sm text-zinc-500">
-        {data ? `Server uptime ${formatUptime(data.uptime)} · ` : ''}
-        refreshes every 5s
+      <footer className="flex items-center justify-between text-sm text-zinc-500">
+        <span>
+          {data ? `Server uptime ${formatUptime(data.uptime)} · ` : ''}
+          refreshes every 5s
+        </span>
+        <Link to={authStatus === 'authenticated' ? '/' : '/login'} className="hover:text-zinc-300">
+          {authStatus === 'authenticated' ? 'Home' : 'Log in'} →
+        </Link>
       </footer>
     </main>
   );

@@ -18,7 +18,7 @@ const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error(
-    `\n❌ Invalid environment configuration (server/.env):\n${z.prettifyError(parsed.error)}\n\n` +
+    `\n❌ Invalid environment configuration (server/.env, or server/.env.test for tests):\n${z.prettifyError(parsed.error)}\n\n` +
       'Copy server/.env.example to server/.env and fill in the values.\n',
   );
   process.exit(1);

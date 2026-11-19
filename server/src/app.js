@@ -1,3 +1,4 @@
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
@@ -12,6 +13,7 @@ export const app = express();
 app.use(helmet());
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(express.json({ limit: '100kb' }));
+app.use(cookieParser());
 if (env.isDev) app.use(morgan('dev'));
 
 app.use('/api', routes);
