@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
+import { playSound } from '@/lib/sound.js';
 import { request, socket } from '@/lib/socket.js';
 import { useAuthStore } from '@/store/authStore.js';
 import { usePlayStore } from '@/store/playStore.js';
@@ -34,6 +35,7 @@ export function usePlaySession() {
     const onFound = ({ matchId }) => {
       setQueue(null);
       setRoom(null);
+      playSound('matchFound');
       navigate(`/match/${matchId}`);
     };
     const onQueue = (payload) => setQueue(payload.status === 'searching' ? payload : null);

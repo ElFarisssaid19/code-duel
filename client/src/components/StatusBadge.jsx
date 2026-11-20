@@ -1,13 +1,10 @@
-import { TONE_CLASSES, verdictOf } from '@/lib/verdicts.js';
+import Badge from '@/components/ui/Badge.jsx';
+import { verdictOf } from '@/lib/verdicts.js';
+
+const TONES = { success: 'success', danger: 'danger', warning: 'warning', muted: 'neutral' };
 
 /** Judge verdict pill, e.g. "Accepted" in green. */
 export default function StatusBadge({ status }) {
   const { label, tone } = verdictOf(status);
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${TONE_CLASSES[tone].badge}`}
-    >
-      {label}
-    </span>
-  );
+  return <Badge tone={TONES[tone]}>{label}</Badge>;
 }

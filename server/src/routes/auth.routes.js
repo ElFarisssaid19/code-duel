@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, logout, me, register } from '../controllers/auth.controller.js';
+import { login, logout, me, register, session } from '../controllers/auth.controller.js';
 import { loginRateLimit, registerRateLimit } from '../middleware/rateLimit.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { validateBody } from '../middleware/validate.js';
@@ -17,5 +17,6 @@ router.post('/register', registerRateLimit, validateBody(registerSchema), regist
 router.post('/login', loginRateLimit, validateBody(loginSchema), login);
 router.post('/logout', logout);
 router.get('/me', requireAuth, me);
+router.get('/session', session);
 
 export default router;

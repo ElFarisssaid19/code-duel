@@ -1,115 +1,137 @@
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router';
-import FormError from '@/components/FormError.jsx';
+import { Link, useSearchParams } from 'react-router';
 import Pagination from '@/components/Pagination.jsx';
-import Spinner from '@/components/Spinner.jsx';
 import UserLink from '@/components/UserLink.jsx';
-import { api } from '@/lib/api.js';
+import Card from '@/components/ui/Card.jsx';
+import EmptyState from '@/components/ui/EmptyState.jsx';
+import ErrorState from '@/components/ui/ErrorState.jsx';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
+import { buttonClasses } from '@/components/ui/styles.js';
+import { useApi } from '@/hooks/useApi.js';
 
 const LIMIT = 20;
 const MEDALS = {
-  1: 'bg-amber-400/15 text-amber-300 ring-amber-400/40',
+  1: 'bg-amber-400/15 text-amber-200 ring-amber-400/40',
   2: 'bg-zinc-300/10 text-zinc-200 ring-zinc-300/30',
-  3: 'bg-orange-500/15 text-orange-300 ring-orange-500/30',
+  3: 'bg-orange-500/15 text-orange-200 ring-orange-500/30',
 };
 
 function Row({ entry, mine, sticky = false }) {
   const medal = MEDALS[entry.rank];
   return (
     <tr
-      className={`${mine ? 'bg-emerald-500/10' : medal ? 'bg-zinc-900/80' : ''} ${
+      className={`${mine ? 'bg-emerald-500/10' : medal ? 'bg-surface-raised/40' : ''} ${
         sticky
-          ? 'sticky bottom-0 border-t-2 border-emerald-500/40 bg-zinc-950 shadow-[0_-8px_16px_rgba(0,0,0,0.5)]'
+          ? 'sticky bottom-0 border-t-2 border-emerald-500/40 bg-canvas shadow-[0_-8px_16px_rgba(0,0,0,0.5)]'
           : ''
       }`}
       aria-current={mine ? 'true' : undefined}
     >
       <td className="px-3 py-3 sm:px-4">
         <span
-          className={`inline-flex min-w-9 items-center justify-center rounded-md px-1.5 py-0.5 font-mono text-sm font-bold ${
-            medal ? `ring-1 ring-inset ${medal}` : 'text-zinc-400'
-          }`}
+          className={`inline-flex min-w-9 items-center justify-center rounded-md px-1.5 py-0.5 font-mono text-sm font-bold ${medal ? `ring-1 ring-inset ${medal}` : 'text-ink-muted'}`}
         >
           #{entry.rank}
         </span>
       </td>
       <td className="max-w-[9rem] truncate px-3 py-3 font-medium sm:max-w-none sm:px-4">
-        <UserLink
-          username={entry.username}
-          className={mine ? 'text-emerald-300' : 'text-zinc-100'}
-        />
-        {mine && <span className="ml-2 text-xs text-emerald-400">(you)</span>}
+        <UserLink username={entry.username} className={mine ? 'text-emerald-300' : 'text-ink'} />
+        {mine && <span className="ml-2 text-xs text-emerald-300">(you)</span>}
       </td>
-      <td className="px-3 py-3 text-right font-mono font-semibold text-zinc-100 sm:px-4">
-        {entry.elo}
-      </td>
+      <td className="px-3 py-3 text-right font-mono font-semibold text-ink sm:px-4">{entry.elo}</td>
       <td className="hidden px-4 py-3 text-right font-mono text-sm sm:table-cell">
-        <span className="text-emerald-400">{entry.wins}</span>
-        <span className="text-zinc-600"> / </span>
-        <span className="text-red-400">{entry.losses}</span>
-        <span className="text-zinc-600"> / </span>
+        <span className="text-emerald-300">{entry.wins}</span>
+        <span className="text-ink-subtle"> / </span>
+        <span className="text-red-300">{entry.losses}</span>
+        <span className="text-ink-subtle"> / </span>
         <span className="text-zinc-300">{entry.draws}</span>
       </td>
       <td className="px-3 py-3 text-right font-mono text-sm text-zinc-300 sm:px-4">
         {entry.winRate}%
       </td>
-      <td className="hidden px-4 py-3 text-right font-mono text-sm text-zinc-400 md:table-cell">
+      <td className="hidden px-4 py-3 text-right font-mono text-sm text-ink-muted md:table-cell">
         {entry.gamesPlayed}
       </td>
     </tr>
   );
 }
 
+function LeaderboardSkeleton() {
+  return (
+    <SkeletonGroup label="Loading the leaderboard">
+      <Card padding="p-0" className="divide-y divide-line overflow-hidden">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+            <Skeleton className="h-6 w-10" />
+            <Skeleton className="h-4 flex-1" />
+            <Skeleton className="h-4 w-12" />
+            <Skeleton className="hidden h-4 w-20 sm:block" />
+            <Skeleton className="h-4 w-12" />
+          </div>
+        ))}
+      </Card>
+    </SkeletonGroup>
+  );
+}
+
 export default function LeaderboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
-  const [state, setState] = useState({ page: null, data: null, error: null });
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get(`/leaderboard?page=${page}&limit=${LIMIT}`)
-      .then((data) => !cancelled && setState({ page, data, error: null }))
-      .catch((err) => !cancelled && setState({ page, data: null, error: err.message }));
-    return () => {
-      cancelled = true;
-    };
-  }, [page]);
-
-  const { data, error } = state;
-  const loading = state.page !== page;
+  const { data, error, loading, retry } = useApi(`/leaderboard?page=${page}&limit=${LIMIT}`);
   const me = data?.me;
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8 sm:py-12">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">Leaderboard</h1>
-          <p className="text-sm text-zinc-400">
+          <p className="eyebrow">Season ladder</p>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Leaderboard</h1>
+          <p className="text-sm text-ink-muted">
             Ranked players by ELO. Private matches don&apos;t count.
           </p>
         </div>
-        {me ? (
-          <p className="text-sm text-zinc-400">
-            Your rank: <span className="font-mono font-semibold text-emerald-400">#{me.rank}</span>
+        {me && (
+          <p className="text-sm text-ink-muted">
+            Your rank: <span className="font-mono font-semibold text-accent">#{me.rank}</span>
           </p>
-        ) : (
-          data && <p className="text-sm text-zinc-500">Play a ranked match to get a rank.</p>
         )}
       </header>
 
-      <FormError>{error}</FormError>
-      {loading && !error && (
-        <div className="flex justify-center py-16 text-emerald-400">
-          <Spinner className="size-7" />
-        </div>
+      {data && !me && data.entries.length > 0 && (
+        <Card padding="p-4" className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-ink-muted">
+            <span className="font-medium text-ink">No rank yet.</span> Play one ranked match to join
+            the leaderboard.
+          </p>
+          <Link to="/" className={buttonClasses({ size: 'sm' })}>
+            Play ranked
+          </Link>
+        </Card>
       )}
 
-      {!loading && data && (
+      {loading && <LeaderboardSkeleton />}
+      {error && <ErrorState message={error.message} onRetry={retry} />}
+
+      {data && data.entries.length === 0 && (
+        <Card>
+          <EmptyState
+            icon="#1"
+            title="The ladder is empty"
+            description="Nobody has finished a ranked match yet. Play one and take the first spot."
+            action={
+              <Link to="/" className={buttonClasses()}>
+                Play ranked
+              </Link>
+            }
+          />
+        </Card>
+      )}
+
+      {data && data.entries.length > 0 && (
         <>
-          <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+          <Card padding="p-0" className="overflow-hidden">
             <table className="w-full text-left">
-              <thead className="border-b border-zinc-800 text-xs tracking-wide text-zinc-500 uppercase">
+              <caption className="sr-only">Leaderboard, page {data.page}</caption>
+              <thead className="border-b border-line text-xs tracking-wide text-ink-subtle uppercase">
                 <tr>
                   <th scope="col" className="px-3 py-3 font-medium sm:px-4">
                     Rank
@@ -131,21 +153,14 @@ export default function LeaderboardPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/80">
+              <tbody className="divide-y divide-line/80">
                 {data.entries.map((entry) => (
                   <Row key={entry.userId} entry={entry} mine={entry.userId === me?.userId} />
                 ))}
-                {data.entries.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-sm text-zinc-500">
-                      Nobody has played a ranked match yet.
-                    </td>
-                  </tr>
-                )}
                 {me && !me.onPage && <Row entry={me} mine sticky />}
               </tbody>
             </table>
-          </div>
+          </Card>
           <Pagination
             page={data.page}
             totalPages={data.totalPages}

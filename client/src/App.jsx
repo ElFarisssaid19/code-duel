@@ -6,26 +6,39 @@ import ProtectedRoute from '@/components/ProtectedRoute.jsx';
 import AppLayout from '@/components/layout/AppLayout.jsx';
 import { usePlaySession } from '@/hooks/usePlaySession.js';
 import { useSocketLifecycle } from '@/hooks/useSocketLifecycle.js';
-import HomePage from '@/pages/HomePage.jsx';
-import JoinRoomPage from '@/pages/JoinRoomPage.jsx';
-import LeaderboardPage from '@/pages/LeaderboardPage.jsx';
-import LoginPage from '@/pages/LoginPage.jsx';
-import NotFoundPage from '@/pages/NotFoundPage.jsx';
-import ProblemsPage from '@/pages/ProblemsPage.jsx';
-import ProfilePage from '@/pages/ProfilePage.jsx';
-import RegisterPage from '@/pages/RegisterPage.jsx';
-import StatusPage from '@/pages/StatusPage.jsx';
+import { useAuthStore } from '@/store/authStore.js';
 
-// These pages bundle Monaco (several MB): load them only when needed.
+// Route-level code splitting: every page is its own chunk (Monaco only loads with the editor
+// pages: practice, match, match details).
+const LandingPage = lazy(() => import('@/pages/LandingPage.jsx'));
+const HomePage = lazy(() => import('@/pages/HomePage.jsx'));
+const LoginPage = lazy(() => import('@/pages/LoginPage.jsx'));
+const RegisterPage = lazy(() => import('@/pages/RegisterPage.jsx'));
+const ProblemsPage = lazy(() => import('@/pages/ProblemsPage.jsx'));
 const PracticePage = lazy(() => import('@/pages/PracticePage.jsx'));
-const MatchPage = lazy(() => import('@/pages/MatchPage.jsx'));
+const LeaderboardPage = lazy(() => import('@/pages/LeaderboardPage.jsx'));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage.jsx'));
 const MatchDetailsPage = lazy(() => import('@/pages/MatchDetailsPage.jsx'));
+const MatchPage = lazy(() => import('@/pages/MatchPage.jsx'));
+const JoinRoomPage = lazy(() => import('@/pages/JoinRoomPage.jsx'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage.jsx'));
+const StatusPage = lazy(() => import('@/pages/StatusPage.jsx'));
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage.jsx'));
+const OgImagePage = lazy(() => import('@/pages/OgImagePage.jsx'));
 
-const lazyPage = (Page) => (
+const page = (Page) => (
   <Suspense fallback={<FullPageSpinner />}>
     <Page />
   </Suspense>
 );
+
+/** "/": the landing page for guests, the play page for logged-in users. */
+function RootRoute() {
+  const status = useAuthStore((s) => s.status);
+  if (status === 'loading') return <FullPageSpinner />;
+  if (status === 'guest') return page(LandingPage);
+  return <AppLayout>{page(HomePage)}</AppLayout>;
+}
 
 export default function App() {
   useSocketLifecycle();
@@ -33,32 +46,30 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/" element={<RootRoute />} />
       <Route element={<ProtectedRoute />}>
         {/* Logged-in pages with the global navbar */}
         <Route element={<AppLayout />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/problems" element={<ProblemsPage />} />
-          <Route path="/practice/:slug" element={lazyPage(PracticePage)} />
-          <Route path="/leaderboard" element={<LeaderboardPage />} />
-          <Route path="/u/:username" element={<ProfilePage />} />
-          <Route path="/matches/:id" element={lazyPage(MatchDetailsPage)} />
-          <Route path="/join/:code" element={<JoinRoomPage />} />
+          <Route path="/problems" element={page(ProblemsPage)} />
+          <Route path="/practice/:slug" element={page(PracticePage)} />
+          <Route path="/leaderboard" element={page(LeaderboardPage)} />
+          <Route path="/u/:username" element={page(ProfilePage)} />
+          <Route path="/matches/:id" element={page(MatchDetailsPage)} />
+          <Route path="/join/:code" element={page(JoinRoomPage)} />
+          <Route path="/settings" element={page(SettingsPage)} />
         </Route>
         {/* Focus mode: the arena has its own minimal header */}
-        <Route path="/match/:id" element={lazyPage(MatchPage)} />
+        <Route path="/match/:id" element={page(MatchPage)} />
       </Route>
       <Route element={<GuestRoute />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={page(LoginPage)} />
+        <Route path="/register" element={page(RegisterPage)} />
       </Route>
-      <Route path="/dev/status" element={<StatusPage />} />
+      <Route path="/dev/status" element={page(StatusPage)} />
+      {import.meta.env.DEV && <Route path="/og" element={page(OgImagePage)} />}
       <Route
         path="*"
-        element={
-          <div className="flex min-h-dvh flex-col">
-            <NotFoundPage />
-          </div>
-        }
+        element={<div className="flex min-h-dvh flex-col">{page(NotFoundPage)}</div>}
       />
     </Routes>
   );

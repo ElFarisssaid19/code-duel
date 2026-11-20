@@ -11,3 +11,10 @@ export const REASON_LABELS = {
   DISCONNECT: 'Disconnect',
   CANCELLED: 'Cancelled',
 };
+
+/** Outcome of the match for this player: 'win' | 'loss' | 'draw' | 'cancelled'. */
+export function outcomeOf(result, meId) {
+  if (result.reason === 'CANCELLED') return 'cancelled';
+  if (result.winnerId === null) return 'draw';
+  return result.winnerId === meId ? 'win' : 'loss';
+}

@@ -1,6 +1,6 @@
 import Editor from '@monaco-editor/react';
 import { useEffect, useRef } from 'react';
-import Spinner from '@/components/Spinner.jsx';
+import Spinner from '@/components/ui/Spinner.jsx';
 import { monaco } from '@/lib/monaco.js';
 
 /**
@@ -20,6 +20,8 @@ export default function CodeEditor({ path, language, value, onChange, onRun, onS
       handlers.current.onSubmit(),
     );
     editor.focus();
+    // Automation hook for scripts/docs (dev builds only; stripped from production).
+    if (import.meta.env.DEV) window.__codeDuelEditor = editor;
   }
 
   return (

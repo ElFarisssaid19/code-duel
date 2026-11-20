@@ -1,22 +1,29 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import Button from '@/components/Button.jsx';
+import Button from '@/components/ui/Button.jsx';
 import FullPageSpinner from '@/components/FullPageSpinner.jsx';
 import Logo from '@/components/Logo.jsx';
-import Modal from '@/components/Modal.jsx';
-import ToastStack from '@/components/ToastStack.jsx';
+import MuteToggle from '@/components/MuteToggle.jsx';
+import ConnectionBanner from '@/components/layout/ConnectionBanner.jsx';
+import Confetti from '@/components/match/Confetti.jsx';
 import Countdown from '@/components/match/Countdown.jsx';
 import MatchTimer from '@/components/match/MatchTimer.jsx';
 import PlayerProgress from '@/components/match/PlayerProgress.jsx';
 import ResultModal from '@/components/match/ResultModal.jsx';
+import { outcomeOf } from '@/components/match/format.js';
 import CodeEditor from '@/components/practice/CodeEditor.jsx';
 import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
 import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
 import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
 import { paramNames } from '@/components/practice/params.js';
+import Modal from '@/components/ui/Modal.jsx';
+import Tabs from '@/components/ui/Tabs.jsx';
+import { ToastStack } from '@/components/ui/Toast.jsx';
 import { useNow } from '@/hooks/useNow.js';
+import { useReducedMotion } from '@/hooks/useReducedMotion.js';
 import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { useToasts } from '@/hooks/useToasts.js';
+import { playSound } from '@/lib/sound.js';
 import { request, socket } from '@/lib/socket.js';
 import { loadItem, saveItem } from '@/lib/storage.js';
 import { useAuthStore } from '@/store/authStore.js';
@@ -75,9 +82,11 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
   const live = state.status === 'ACTIVE';
   const now = useNow(250);
 
+  const preferredLanguage = useAuthStore((s) => s.user?.preferredLanguage);
   const [language, setLanguage] = useState(() => {
     const saved = loadItem(languageKey(matchId));
-    return saved in FILE_EXTENSIONS ? saved : 'javascript';
+    if (saved in FILE_EXTENSIONS) return saved;
+    return preferredLanguage in FILE_EXTENSIONS ? preferredLanguage : 'javascript';
   });
   const [code, setCode] = useState(
     () => loadItem(codeKey(matchId, language)) ?? problem.starterCode[language],
@@ -141,13 +150,17 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
 
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh">
-      <header className="border-b border-zinc-800 bg-zinc-950 px-4 pt-2 pb-3">
+      <ConnectionBanner />
+      <header className="border-b border-line bg-canvas/90 px-4 pt-2 pb-3">
         {/* Focus mode: no navbar, just a minimal header */}
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <Logo className="text-sm" />
-          <span className="text-[0.7rem] tracking-wide text-zinc-500 uppercase">
-            {state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel'}
-          </span>
+          <div className="flex items-center gap-1">
+            <span className="eyebrow">
+              {state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel'}
+            </span>
+            <MuteToggle />
+          </div>
         </div>
         <div className="grid grid-cols-2 items-center gap-x-4 gap-y-2 lg:flex lg:gap-4">
           <div className="col-span-2 flex justify-center lg:order-2 lg:col-span-1 lg:shrink-0 lg:px-2">
@@ -164,27 +177,29 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
         </div>
       </header>
 
-      <div className="flex border-b border-zinc-800 lg:hidden" role="tablist" aria-label="Arena">
-        {PANES.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            role="tab"
-            aria-selected={pane === p.id}
-            onClick={() => setPane(p.id)}
-            className={`flex-1 border-b-2 px-3 py-2.5 text-sm font-medium transition ${
-              pane === p.id ? 'border-emerald-400 text-zinc-50' : 'border-transparent text-zinc-400'
-            }`}
-          >
-            {p.label}
-            {p.id === 'results' && running && <span className="ml-1.5 animate-pulse">•</span>}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        className="lg:hidden"
+        label="Arena"
+        tabs={PANES}
+        value={pane}
+        onChange={setPane}
+        panelId={(tab) => `arena-${tab.id}`}
+        renderTab={(tab) => (
+          <>
+            {tab.label}
+            {tab.id === 'results' && running && (
+              <span className="ml-1.5 animate-pulse" aria-hidden="true">
+                •
+              </span>
+            )}
+          </>
+        )}
+      />
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section
-          className={`min-h-0 min-w-0 overflow-y-auto border-zinc-800 lg:block lg:border-r ${pane === 'problem' ? '' : 'hidden'}`}
+          id="arena-problem"
+          className={`min-h-0 min-w-0 overflow-y-auto border-line lg:block lg:border-r ${pane === 'problem' ? '' : 'hidden'}`}
           aria-label="Problem"
         >
           <ProblemStatement problem={problem} params={params} />
@@ -194,19 +209,14 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
           className={`min-h-0 min-w-0 flex-col lg:flex ${pane === 'problem' ? 'hidden' : 'flex'}`}
           aria-label="Editor and results"
         >
-          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
             <LanguageSelect
               value={language}
               onChange={changeLanguage}
               disabled={Boolean(running)}
             />
             <div className="ml-auto flex items-center gap-2">
-              <Button
-                variant="secondary"
-                onClick={onForfeit}
-                disabled={!live}
-                className="text-red-300"
-              >
+              <Button variant="danger-outline" onClick={onForfeit} disabled={!live}>
                 Forfeit
               </Button>
               <Button
@@ -229,7 +239,8 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
             </div>
           </div>
           <div
-            className={`h-[60dvh] min-h-0 border-b border-zinc-800 lg:block lg:h-auto lg:flex-[3] ${pane === 'editor' ? '' : 'hidden'}`}
+            id="arena-editor"
+            className={`h-[60dvh] min-h-0 border-b border-line lg:block lg:h-auto lg:flex-[3] ${pane === 'editor' ? '' : 'hidden'}`}
           >
             <CodeEditor
               path={`match-${matchId}/solution.${FILE_EXTENSIONS[language]}`}
@@ -241,6 +252,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
             />
           </div>
           <div
+            id="arena-results"
             className={`min-h-[220px] overflow-y-auto p-4 lg:block lg:flex-[2] ${pane === 'results' ? '' : 'hidden'}`}
             aria-live="polite"
           >
@@ -270,6 +282,8 @@ function MatchSession({ matchId }) {
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState(null);
   const [toasts, toast] = useToasts();
+  const [celebrate, setCelebrate] = useState(false);
+  const reducedMotion = useReducedMotion();
   const opponentPassed = useRef(0);
   const now = useNow(200);
 
@@ -297,13 +311,15 @@ function MatchSession({ matchId }) {
         dispatch({ type: 'countdown', startsAt: p.startsAt });
       },
       'match:start': (p) => {
+        playSound('go');
         syncClock(p.serverNow);
         dispatch({ type: 'start', ...p });
       },
       'match:submit:result': (p) => dispatch({ type: 'myProgress', progress: p.progress }),
       'opponent:progress': (progress) => {
         if (progress.passed > opponentPassed.current) {
-          toast(`Your opponent now passes ${progress.passed}/${progress.total} tests`, 'warning');
+          playSound('opponentProgress');
+          toast(`Your opponent now passes ${progress.passed}/${progress.total} tests`, 'info');
         }
         opponentPassed.current = Math.max(opponentPassed.current, progress.passed);
         dispatch({ type: 'opponentProgress', progress });
@@ -321,6 +337,9 @@ function MatchSession({ matchId }) {
       'match:end': (result) => {
         if (result.matchId !== matchId) return;
         dispatch({ type: 'end', result });
+        const outcome = outcomeOf(result, useAuthStore.getState().user?.id);
+        if (outcome !== 'cancelled') playSound(outcome === 'loss' ? 'lose' : outcome);
+        if (outcome === 'win') setCelebrate(true);
         useAuthStore.getState().fetchMe(); // new ELO for the navbar badge
       },
       'rematch:update': (rematch) =>
@@ -361,9 +380,9 @@ function MatchSession({ matchId }) {
 
   if (loadError) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
-        <p className="text-lg font-semibold">{loadError.message}</p>
-        <Link to="/" className="text-sm text-emerald-400 hover:text-emerald-300">
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="font-display text-lg font-semibold">{loadError.message}</p>
+        <Link to="/" className="rounded text-sm text-accent hover:text-emerald-300">
           ← Back home
         </Link>
       </main>
@@ -397,14 +416,10 @@ function MatchSession({ matchId }) {
           {state.mode === 'RANKED' ? ' and you lose ELO' : ''}.
         </p>
         <div className="mt-6 flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setConfirmForfeit(false)}>
+          <Button variant="secondary" onClick={() => setConfirmForfeit(false)} data-autofocus>
             Keep playing
           </Button>
-          <Button
-            onClick={forfeit}
-            loading={forfeiting}
-            className="bg-red-500 text-white hover:bg-red-400"
-          >
+          <Button variant="danger" onClick={forfeit} loading={forfeiting}>
             Forfeit
           </Button>
         </div>
@@ -425,6 +440,7 @@ function MatchSession({ matchId }) {
           onHome={() => navigate('/')}
         />
       )}
+      {celebrate && !reducedMotion && <Confetti />}
       <ToastStack toasts={toasts} />
     </>
   );

@@ -55,15 +55,20 @@ enum MatchEndReason {
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  username     String   @unique @db.VarChar(32)
-  email        String   @unique @db.VarChar(255)
-  passwordHash String   @db.VarChar(255)
-  elo          Int      @default(1000)
-  wins         Int      @default(0)
-  losses       Int      @default(0)
-  draws        Int      @default(0)
-  createdAt    DateTime @default(now())
+  id                Int      @id @default(autoincrement())
+  username          String   @unique @db.VarChar(32)
+  email             String   @unique @db.VarChar(255)
+  passwordHash      String   @db.VarChar(255)
+  elo               Int      @default(1000)
+  wins              Int      @default(0)
+  losses            Int      @default(0)
+  draws             Int      @default(0)
+  /// Incremented to revoke every session (password change, "log out of all devices").
+  /// Embedded in the JWT; tokens with an older version are rejected.
+  tokenVersion      Int      @default(0)
+  /// Default editor language for practice and duels
+  preferredLanguage String   @default("javascript") @db.VarChar(16)
+  createdAt         DateTime @default(now())
 
   matchesAsPlayer1 Match[]      @relation("MatchPlayer1")
   matchesAsPlayer2 Match[]      @relation("MatchPlayer2")

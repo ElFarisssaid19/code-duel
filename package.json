@@ -18,6 +18,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docs:icons": "node scripts/docs/icons.mjs",
+    "docs:capture": "node scripts/docs/capture.mjs",
     "infra:up": "docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --build --wait",
     "infra:down": "docker compose -f infra/docker-compose.yml --env-file infra/.env down",
     "infra:logs": "docker compose -f infra/docker-compose.yml --env-file infra/.env logs -f",

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import Spinner from '@/components/Spinner.jsx';
+import Spinner from '@/components/ui/Spinner.jsx';
 import { request, socket } from '@/lib/socket.js';
 
 /**

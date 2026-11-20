@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router';
 import Logo from '@/components/Logo.jsx';
+import MuteToggle from '@/components/MuteToggle.jsx';
 import { useAuthStore } from '@/store/authStore.js';
 
 function links(username) {
@@ -9,12 +10,15 @@ function links(username) {
     { to: '/problems', label: 'Practice', also: '/practice/' },
     { to: '/leaderboard', label: 'Leaderboard' },
     { to: `/u/${username}`, label: 'My profile' },
+    { to: '/settings', label: 'Settings' },
   ];
 }
 
 const linkClass = (active) =>
   `rounded-lg px-3 py-2 text-sm font-medium transition ${
-    active ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100'
+    active
+      ? 'bg-surface-raised text-ink shadow-[inset_0_-2px_0_var(--color-accent)]'
+      : 'text-ink-muted hover:bg-surface-raised/60 hover:text-ink'
   }`;
 
 /** Global navigation for logged-in pages (hidden in the match arena). */
@@ -47,25 +51,27 @@ export default function Navbar() {
   async function handleLogout() {
     setLoggingOut(true);
     try {
-      await logout(); // ProtectedRoute redirects to /login
+      await logout();
     } catch {
       setLoggingOut(false);
     }
   }
 
   return (
-    <header className="sticky top-0 z-30 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-line bg-canvas/85 backdrop-blur">
       <nav className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4" aria-label="Main">
-        <Link to="/" className="mr-2 shrink-0">
+        <Link to="/" className="mr-2 shrink-0 rounded-md" aria-label="Code Duel, play">
           <Logo />
         </Link>
-        <div className="hidden items-center gap-1 md:flex">{items}</div>
+        <div className="hidden items-center gap-1 lg:flex">{items}</div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5">
+          <MuteToggle />
           <Link
             to={`/u/${user.username}`}
-            className="rounded-full bg-emerald-500/10 px-3 py-1 font-mono text-sm font-semibold text-emerald-400 ring-1 ring-emerald-500/30 ring-inset"
+            className="rounded-full bg-emerald-500/10 px-3 py-1 font-mono text-sm font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition ring-inset hover:bg-emerald-500/20"
             title="Your ELO"
+            aria-label={`Your ELO: ${user.elo}. Open your profile`}
             data-testid="nav-elo"
           >
             {user.elo}
@@ -74,16 +80,16 @@ export default function Navbar() {
             type="button"
             onClick={handleLogout}
             disabled={loggingOut}
-            className="hidden rounded-lg px-3 py-2 text-sm text-zinc-400 transition hover:bg-zinc-800/60 hover:text-zinc-100 disabled:opacity-60 md:block"
+            className="hidden rounded-lg px-3 py-2 text-sm text-ink-muted transition hover:bg-surface-raised/60 hover:text-ink disabled:opacity-60 lg:block"
           >
             Log out
           </button>
           <button
             type="button"
-            className="rounded-lg p-2 text-zinc-300 hover:bg-zinc-800 md:hidden"
+            className="rounded-lg p-2 text-zinc-300 transition hover:bg-surface-raised lg:hidden"
             aria-expanded={open}
             aria-controls="mobile-menu"
-            aria-label="Menu"
+            aria-label={open ? 'Close menu' : 'Open menu'}
             onClick={() => setOpen((v) => !v)}
           >
             <svg viewBox="0 0 20 20" className="size-5" fill="currentColor" aria-hidden="true">
@@ -99,7 +105,7 @@ export default function Navbar() {
       {open && (
         <div
           id="mobile-menu"
-          className="flex flex-col gap-1 border-t border-zinc-800 px-4 py-3 md:hidden"
+          className="flex flex-col gap-1 border-t border-line px-4 py-3 lg:hidden"
         >
           {items}
           <button type="button" onClick={handleLogout} className={`${linkClass(false)} text-left`}>

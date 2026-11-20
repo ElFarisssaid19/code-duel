@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
 import { env } from '../config/env.js';
+import { SESSIONS_REVOKED, sessionEvents } from '../lib/sessionEvents.js';
 import { judgeSolution, judgeSubmission } from '../services/judge/index.js';
 import { MatchManager } from '../services/match/MatchManager.js';
 import { createMatchRepository } from '../services/match/matchRepository.js';
@@ -31,6 +32,24 @@ export function initSocket(httpServer, { matchConfig, matchmakerOptions } = {}) 
   io.matchManager = manager;
 
   io.use(socketAuth);
+
+  // Sessions revoked (password change / log out everywhere): drop sockets that were authenticated
+  // with an older token version. The client is told why, then re-checks its session.
+  const onSessionsRevoked = async ({ userId, tokenVersion }) => {
+    const sockets = await io.in(userRoom(userId)).fetchSockets();
+    for (const s of sockets) {
+      if (s.data.tokenVersion < tokenVersion) {
+        s.emit('session:revoked', { reason: 'Your session was ended on another device.' });
+        s.disconnect(true);
+      }
+    }
+  };
+  sessionEvents.on(SESSIONS_REVOKED, onSessionsRevoked);
+  const closeServer = io.close.bind(io);
+  io.close = (...args) => {
+    sessionEvents.off(SESSIONS_REVOKED, onSessionsRevoked);
+    return closeServer(...args);
+  };
 
   io.on('connection', (socket) => {
     const { user } = socket.data;

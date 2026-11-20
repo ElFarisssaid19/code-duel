@@ -1,17 +1,39 @@
 import { Link } from 'react-router';
-import Button from '@/components/Button.jsx';
-import Modal from '@/components/Modal.jsx';
 import UserLink from '@/components/UserLink.jsx';
-import { formatClock } from '@/components/match/format.js';
+import { formatClock, outcomeOf } from '@/components/match/format.js';
+import Button from '@/components/ui/Button.jsx';
+import Modal from '@/components/ui/Modal.jsx';
 
-function headline(result, meId) {
-  if (result.reason === 'CANCELLED')
-    return { title: 'Match cancelled', tone: 'default', color: 'text-zinc-200' };
-  if (result.winnerId === null) return { title: 'Draw', tone: 'default', color: 'text-zinc-100' };
-  return result.winnerId === meId
-    ? { title: 'Victory!', tone: 'success', color: 'text-emerald-400' }
-    : { title: 'Defeat', tone: 'danger', color: 'text-red-400' };
-}
+const HEADLINES = {
+  win: {
+    title: 'Victory!',
+    tone: 'success',
+    color: 'text-emerald-300',
+    icon: '🏆',
+    animation: 'motion-safe:animate-pop-in',
+  },
+  loss: {
+    title: 'Defeat',
+    tone: 'danger',
+    color: 'text-red-300',
+    icon: '',
+    animation: 'motion-safe:animate-fade-up',
+  },
+  draw: {
+    title: 'Draw',
+    tone: 'default',
+    color: 'text-ink',
+    icon: '',
+    animation: 'motion-safe:animate-fade-up',
+  },
+  cancelled: {
+    title: 'Match cancelled',
+    tone: 'default',
+    color: 'text-zinc-200',
+    icon: '',
+    animation: '',
+  },
+};
 
 function reasonText(result, meId, opponentName) {
   const won = result.winnerId === meId;
@@ -69,13 +91,28 @@ export default function ResultModal({
   rematchError,
   onHome,
 }) {
-  const { title, tone, color } = headline(result, meId);
+  const outcome = outcomeOf(result, meId);
+  const { title, tone, color, icon, animation } = HEADLINES[outcome];
   const elo = result.eloChanges?.[meId];
   const canRematch = result.mode === 'PRIVATE' && result.reason !== 'CANCELLED';
 
   return (
-    <Modal open title={<span className={color}>{title}</span>} tone={tone}>
-      <div className="space-y-5">
+    <Modal
+      open
+      tone={tone}
+      className={outcome === 'loss' ? 'saturate-75' : ''}
+      title={
+        <span
+          className={`inline-flex items-center gap-2 font-display text-2xl ${color} ${animation}`}
+          data-testid="result-title"
+          data-outcome={outcome}
+        >
+          {icon && <span aria-hidden="true">{icon}</span>}
+          {title}
+        </span>
+      }
+    >
+      <div className={`space-y-5 ${animation ? 'motion-safe:animate-fade-up' : ''}`}>
         <p className="text-sm text-zinc-300">{reasonText(result, meId, opponentName)}</p>
 
         {result.reason !== 'CANCELLED' && (
@@ -83,37 +120,48 @@ export default function ResultModal({
             {elo ? (
               <>
                 <span
-                  className={`font-mono text-2xl font-bold ${elo.delta > 0 ? 'text-emerald-400' : elo.delta < 0 ? 'text-red-400' : 'text-zinc-300'}`}
+                  className={`font-mono text-3xl font-bold ${elo.delta > 0 ? 'text-emerald-300' : elo.delta < 0 ? 'text-red-300' : 'text-zinc-300'}`}
                 >
                   {elo.delta > 0 ? '+' : ''}
                   {elo.delta}
                 </span>{' '}
-                <span className="text-zinc-400">
+                <span className="text-ink-muted">
                   ELO ({elo.before} → {elo.after})
                 </span>
               </>
             ) : (
-              <span className="text-zinc-400">Unranked match: no ELO change.</span>
+              <span className="text-ink-muted">Unranked match: no ELO change.</span>
             )}
           </p>
         )}
 
         <table className="w-full text-sm">
+          <caption className="sr-only">Final progress</caption>
           <thead>
-            <tr className="text-left text-xs tracking-wide text-zinc-500 uppercase">
-              <th className="pb-2 font-medium">Player</th>
-              <th className="pb-2 font-medium">Tests</th>
-              <th className="pb-2 font-medium">Attempts</th>
-              <th className="pb-2 text-right font-medium">Solve time</th>
+            <tr className="text-left text-xs tracking-wide text-ink-subtle uppercase">
+              <th scope="col" className="pb-2 font-medium">
+                Player
+              </th>
+              <th scope="col" className="pb-2 font-medium">
+                Tests
+              </th>
+              <th scope="col" className="pb-2 font-medium">
+                Attempts
+              </th>
+              <th scope="col" className="pb-2 text-right font-medium">
+                Solve time
+              </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-800">
+          <tbody className="divide-y divide-line">
             {result.summary.players.map((p) => (
-              <tr key={p.userId} className={p.userId === meId ? 'text-zinc-100' : 'text-zinc-300'}>
+              <tr key={p.userId} className={p.userId === meId ? 'text-ink' : 'text-zinc-300'}>
                 <td className="py-2 font-medium">
                   <UserLink username={p.username} />
                   {p.userId === result.winnerId && (
-                    <span className="ml-1.5 text-emerald-400">★</span>
+                    <span className="ml-1.5 text-emerald-300" aria-label="winner">
+                      ★
+                    </span>
                   )}
                 </td>
                 <td className="py-2 font-mono">
@@ -134,7 +182,7 @@ export default function ResultModal({
           {result.reason !== 'CANCELLED' && (
             <Link
               to={`/matches/${result.matchId}`}
-              className="mr-auto text-sm font-medium text-emerald-400 hover:text-emerald-300"
+              className="mr-auto rounded text-sm font-medium text-accent hover:text-emerald-300"
             >
               View match details →
             </Link>
@@ -142,7 +190,7 @@ export default function ResultModal({
           {canRematch && (
             <RematchButton rematch={rematch} meId={meId} onRematch={onRematch} busy={rematchBusy} />
           )}
-          <Button variant="secondary" onClick={onHome}>
+          <Button variant="secondary" onClick={onHome} data-autofocus>
             Back home
           </Button>
         </div>

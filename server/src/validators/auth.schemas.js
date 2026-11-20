@@ -13,7 +13,7 @@ const email = z
   .toLowerCase()
   .pipe(z.email({ error: 'Enter a valid email address' }).max(255, 'Email is too long'));
 
-const newPassword = z
+export const newPassword = z
   .string({ error: 'Password is required' })
   .min(8, 'Password must be at least 8 characters')
   // bcrypt only uses the first 72 bytes; reject longer passwords instead of silently truncating.

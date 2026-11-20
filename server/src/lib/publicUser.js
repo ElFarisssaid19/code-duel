@@ -10,6 +10,7 @@ export const PUBLIC_USER_FIELDS = [
   'wins',
   'losses',
   'draws',
+  'preferredLanguage',
   'createdAt',
 ];
 

@@ -1,8 +1,8 @@
 import { Link, useLocation } from 'react-router';
 import AuthLayout from '@/components/AuthLayout.jsx';
-import Button from '@/components/Button.jsx';
+import Button from '@/components/ui/Button.jsx';
 import FormError from '@/components/FormError.jsx';
-import FormField from '@/components/FormField.jsx';
+import FormField from '@/components/ui/FormField.jsx';
 import { useApiForm } from '@/hooks/useApiForm.js';
 import { useAuthStore } from '@/store/authStore.js';
 

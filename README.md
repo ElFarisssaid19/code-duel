@@ -1,12 +1,163 @@
+<div align="center">
+
 # Code Duel
 
-Real-time 1v1 coding battles. Two players get the same problem, write code in the browser, and
-the first correct solution wins. Code runs in a sandbox (go-judge) and results update live over
-WebSockets. Players get Elo ratings.
+**Same problem. Same clock. One winner.**
 
-> **Status:** Phase 4 is done: authentication, 16 problems, sandboxed code execution, solo
-> practice, real-time 1v1 duels (ranked with ELO, private rooms), a leaderboard, public profiles
-> with ELO history, match history and match details.
+Real-time 1v1 coding battles in the browser. Two developers get the same algorithm problem, write
+JavaScript or Python against a server-owned clock, and the first to pass every hidden test wins
+the match and the ELO. Code runs in an isolated go-judge sandbox, and both players see each
+other's progress live over WebSockets.
+
+![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Vite 8](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)
+![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white)
+![Express 5](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
+![Socket.io 4](https://img.shields.io/badge/Socket.io-4-010101?logo=socketdotio&logoColor=white)
+![Prisma 7](https://img.shields.io/badge/Prisma-7-2D3748?logo=prisma&logoColor=white)
+![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1?logo=mysql&logoColor=white)
+![go-judge](https://img.shields.io/badge/sandbox-go--judge-00ADD8?logo=go&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-219_passing-34EAA2)
+
+![A ranked duel, from "match found" to the result](docs/demo.gif)
+
+</div>
+
+## Screenshots
+
+| Landing page                                            | Arena, mid-match                                 |
+| ------------------------------------------------------- | ------------------------------------------------ |
+| ![Landing page](docs/screenshots/landing.png)           | ![Arena mid-match](docs/screenshots/arena.png)   |
+| **Result dialog**                                       | **Leaderboard**                                  |
+| ![Result dialog](docs/screenshots/result.png)           | ![Leaderboard](docs/screenshots/leaderboard.png) |
+| **Profile with ELO history**                            | **Practice mode**                                |
+| ![Profile with ELO chart](docs/screenshots/profile.png) | ![Practice mode](docs/screenshots/practice.png)  |
+
+<p align="center">
+  <img src="docs/screenshots/arena-mobile.png" alt="The arena on a 375 px phone: Problem / Editor / Results tabs" width="280"><br>
+  <em>The arena at 375 px: Problem / Editor / Results tabs.</em>
+</p>
+
+## Features
+
+- **Ranked duels:** a matchmaking queue with a widening ELO window, ELO (K = 32) and W/L/D,
+  and problem difficulty picked from the players' average rating.
+- **Private rooms:** a 6-character code or invite link, unranked, with a rematch flow.
+- **Live arena:** the server-owned timer, both players' test progress, an "opponent is typing"
+  indicator, and Run (samples) / Submit (everything) in JavaScript or Python with Monaco.
+- **16 problems** (5 easy, 7 medium, 4 hard), each with 2 samples and 8+ hidden tests. Hard
+  problems include large inputs that time out O(n²) solutions.
+- **Practice mode:** the same judge, with no opponent.
+- **Leaderboard, profiles and match details:** ranks with ties, a hand-drawn SVG ELO chart,
+  streaks, solved-by-difficulty, a submission timeline, and both final codes (after the match).
+- **Game feel:** a "match found" animation, a 3-2-1 countdown, a sound and toast when the
+  opponent passes more tests, and confetti on a win. Every sound is synthesized with the Web Audio
+  API. There's a mute toggle, and `prefers-reduced-motion` is respected.
+- **Accounts:** httpOnly JWT cookie sessions, a password change, "log out of all devices"
+  (token versioning revokes HTTP sessions and live sockets), and a default editor language.
+- **Polish:** an "arena night" design system, self-hosted fonts, skeletons, empty and error states
+  with Retry, a reconnecting banner, keyboard navigation, route-level code splitting, and
+  Lighthouse **95–96 / 100 / 100** (Performance / Accessibility / Best Practices).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Browser["Browser (React 19 + Vite)"]
+    UI["Pages + Zustand stores"]
+    ED["Monaco editor"]
+  end
+
+  subgraph Server["Node.js 24 server"]
+    API["Express 5 REST API<br/>auth, problems, practice,<br/>leaderboard, settings, stats"]
+    WS["Socket.io 4<br/>queue, rooms, live match"]
+    MM["MatchManager<br/>server-owned timers,<br/>matchmaker, ELO"]
+    JG["Judge service<br/>harness + verdicts"]
+  end
+
+  DB[("MySQL 8.4<br/>Prisma 7")]
+  SB["go-judge sandbox<br/>(Docker, cgroup v2)<br/>Node.js + Python"]
+
+  UI -- "HTTPS + httpOnly cookie" --> API
+  UI <-- "WebSocket (same cookie)" --> WS
+  ED --> UI
+  WS --> MM
+  API --> JG
+  MM --> JG
+  JG -- "REST: run code" --> SB
+  API --> DB
+  MM -- "one transaction per result" --> DB
+```
+
+## The hard parts
+
+- **Running untrusted code safely:** every run executes in a nested
+  [go-judge](https://github.com/criyle/go-judge) sandbox (Linux namespaces, seccomp, cgroup v2):
+  - an empty network namespace;
+  - read-only runtimes and small tmpfs scratch space;
+  - CPU, wall-clock, 256 MB memory and 32-process limits;
+  - 64 KB output caps.
+
+  The go-judge API listens on localhost only. The integration tests attack it for real: infinite
+  loops, huge allocations, network access and host file reads.
+
+- **Hidden tests stay hidden:** hidden inputs and expected outputs never leave the server. Hidden
+  results carry only `{ index, status, timeMs }`, with no logs or errors (they could echo the
+  input). The tests check every REST response and every socket event, even when user code prints
+  stdin, dumps its memory or escapes the JS `vm`.
+- **The server owns the clock:** the countdown, match deadline, disconnect grace and room expiry
+  all run on the server. Clients only render `endsAt`, corrected for clock skew. Tiebreaks
+  ("who reached that test count first") use server timestamps.
+- **Reconnect grace:** after a refresh or network drop, a player has 30 s to come back while the
+  match keeps running. On reconnect, the client gets a full `match:state` snapshot, and its code
+  is restored from `localStorage`.
+- **ELO in one transaction:** the match row and both players' ELO and W/L/D are updated
+  atomically, so the result is never half-written. Ranked only: private rooms can't be used to
+  farm rating.
+- **Session revocation with stateless JWTs:** each token carries `tokenVersion`. A password change
+  or "log out of all devices" increments it, rejects old tokens over HTTP, and disconnects that
+  user's older sockets right away.
+
+## Tests
+
+**219 tests in 17 files, all passing.** They run against a real MySQL test database and the real
+go-judge container:
+
+- Unit tests: the judge, harnesses, ELO, the matchmaker and the match state machine (with fake
+  timers).
+- API tests: auth, settings, problems, practice, leaderboard, profiles and match details.
+- Socket integration tests: full duels between two real clients, including reconnects and
+  revocation.
+- Seed checks: every reference solution passes, and naive solutions time out on hard problems.
+
+Details in [Tests](#tests-1).
+
+## Run it locally
+
+You need Node.js 24, Docker with Compose v2, and a Linux host with cgroup v2:
+
+```bash
+npm install
+cp infra/.env.example infra/.env && cp server/.env.example server/.env   # then set real secrets
+npm run infra:up      # MySQL + go-judge
+npm run db:migrate    # schema
+npm run db:seed       # 16 problems, each reference solution checked through go-judge
+npm run dev           # http://localhost:5173
+```
+
+The full walkthrough is in [Setup](#setup).
+
+---
+
+<p align="center">
+  Built by <strong>Said El Fariss</strong> ·
+  <a href="https://github.com/ElFarisssaid19/code-duel">github.com/ElFarisssaid19/code-duel</a>
+</p>
+
+---
+
+# Technical documentation
 
 ## Tech stack
 
@@ -53,10 +204,12 @@ npm run db:seed
 npm run dev
 ```
 
-Open <http://localhost:5173>. You'll land on **/login**: create an account and you're taken to
-the home page, where you can **Play ranked**, create or join a **private room**, or practice.
-The navbar links to Practice, the Leaderboard and your profile. See [Pages](#pages). The dev dashboard at <http://localhost:5173/dev/status> shows the
-API, database, judge, session and socket state (the socket only connects while you're logged in).
+Open <http://localhost:5173>. Logged out, `/` is the **landing page** (live public stats, a mock
+duel). Register and the same URL becomes the **home page**, where you can **Play ranked**, create
+or join a **private room**, or practice. The navbar links to Practice, the Leaderboard, your
+profile and Settings. See [Pages](#pages). The dev dashboard at
+<http://localhost:5173/dev/status> shows the API, database, judge, session and socket state (the
+socket only connects while you're logged in).
 
 Generate secrets with `openssl rand -hex 24` (DB passwords) and `openssl rand -hex 64`
 (`JWT_SECRET`). Use hex or other URL-safe characters for the MySQL password, because it is also
@@ -84,18 +237,23 @@ Run all of these from the repo root.
 | `npm run db:seed`      | Verifies and upserts the practice problems (idempotent)              |
 | `npm run db:generate`  | Regenerates the Prisma client into `server/src/generated/prisma`     |
 | `npm run db:studio`    | Opens Prisma Studio (prints its URL)                                 |
+| `npm run docs:icons`   | Regenerates the favicon set and `og-image.png` (needs `npm run dev`) |
+| `npm run docs:capture` | Regenerates `docs/screenshots/*` and `docs/demo.gif` (see below)     |
 
 Creating a named migration: `npm run db:migrate -- --name add_something`.
 Wiping the database: `npm run infra:down -- -v` deletes the volume, then `npm run infra:up && npm run db:migrate && npm run db:seed`.
 
-Workspace-only scripts: `npm run build -w client`, `npm run start -w server`,
-`npm run db:deploy -w server` (`prisma migrate deploy`, for production).
+Workspace-only scripts: `npm run build -w client`, `npm run preview -w client` (serves the
+production build on port 4173, proxying `/api` and `/socket.io` to port 4000),
+`npm run start -w server`, `npm run db:deploy -w server` (`prisma migrate deploy`, for
+production).
 
 ## Ports
 
 | Service             | Port | URL                              |
 | ------------------- | ---- | -------------------------------- |
 | Client (Vite)       | 5173 | http://localhost:5173            |
+| Client (preview)    | 4173 | http://localhost:4173            |
 | Server (Express/WS) | 4000 | http://localhost:4000/api/health |
 | MySQL               | 3306 | localhost only                   |
 | go-judge API        | 5050 | http://localhost:5050/version    |
@@ -131,15 +289,16 @@ database whose name ends in `_test` (default `code_duel_test`).
 ### Endpoints
 
 All under `/api/auth`. Bodies are JSON. Every user object contains only public fields:
-`id`, `username`, `email`, `elo`, `wins`, `losses`, `draws`, `createdAt`. `passwordHash` is
-never returned.
+`id`, `username`, `email`, `elo`, `wins`, `losses`, `draws`, `preferredLanguage`, `createdAt`.
+`passwordHash` and `tokenVersion` are never returned.
 
-| Method | Path        | Body                            | Success                         | Errors        |
-| ------ | ----------- | ------------------------------- | ------------------------------- | ------------- |
-| POST   | `/register` | `{ username, email, password }` | `201 { user }` + session cookie | 400, 409, 429 |
-| POST   | `/login`    | `{ identifier, password }`      | `200 { user }` + session cookie | 400, 401, 429 |
-| POST   | `/logout`   | none                            | `204`, clears the cookie        | none          |
-| GET    | `/me`       | none (needs the cookie)         | `200 { user }`                  | 401           |
+| Method | Path        | Body                            | Success                            | Errors        |
+| ------ | ----------- | ------------------------------- | ---------------------------------- | ------------- |
+| POST   | `/register` | `{ username, email, password }` | `201 { user }` + session cookie    | 400, 409, 429 |
+| POST   | `/login`    | `{ identifier, password }`      | `200 { user }` + session cookie    | 400, 401, 429 |
+| POST   | `/logout`   | none                            | `204`, clears the cookie           | none          |
+| GET    | `/me`       | none (needs the cookie)         | `200 { user }`                     | 401           |
+| GET    | `/session`  | none                            | `200 { user }` or `{ user: null }` | none          |
 
 - `username`: 3–20 characters, letters, numbers and `_`. Unique, case-insensitive
   (MySQL's default collation), so `Alice` and `alice` can't both exist.
@@ -149,6 +308,8 @@ never returned.
 - `identifier`: a username or an email (anything containing `@` is treated as an email).
 - `/register` and `/login` are rate-limited to **10 requests per 15 minutes per IP** (each route
   counts separately, in memory, reset on server restart).
+- `/session` is what the client calls on load: it answers 200 for guests too, so a logged-out
+  visit doesn't log a 401 in the browser console. `/me` keeps its 401 for API clients.
 
 ### Error format
 
@@ -164,16 +325,17 @@ Every error response has the same shape:
 }
 ```
 
-| Status | `code`                | When                                                                             |
-| ------ | --------------------- | -------------------------------------------------------------------------------- |
-| 400    | `VALIDATION_ERROR`    | Zod validation failed; `details` maps each field to its messages                 |
-| 400    | `INVALID_JSON`        | Malformed JSON body                                                              |
-| 401    | `INVALID_CREDENTIALS` | Wrong login. Same response whether or not the account exists                     |
-| 401    | `UNAUTHORIZED`        | Missing, invalid or expired session                                              |
-| 404    | `NOT_FOUND`           | Unknown route                                                                    |
-| 409    | `CONFLICT`            | Username or email taken, e.g. `details: { "email": ["Email is already taken"] }` |
-| 429    | `RATE_LIMITED`        | Too many login/register attempts                                                 |
-| 500    | `INTERNAL_ERROR`      | Anything unexpected (message hidden in production)                               |
+| Status | `code`                     | When                                                                             |
+| ------ | -------------------------- | -------------------------------------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`         | Zod validation failed; `details` maps each field to its messages                 |
+| 400    | `INVALID_JSON`             | Malformed JSON body                                                              |
+| 400    | `INVALID_CURRENT_PASSWORD` | Password change with a wrong current password (`details.currentPassword`)        |
+| 401    | `INVALID_CREDENTIALS`      | Wrong login. Same response whether or not the account exists                     |
+| 401    | `UNAUTHORIZED`             | Missing, invalid or expired session                                              |
+| 404    | `NOT_FOUND`                | Unknown route                                                                    |
+| 409    | `CONFLICT`                 | Username or email taken, e.g. `details: { "email": ["Email is already taken"] }` |
+| 429    | `RATE_LIMITED`             | Too many login/register/password-change attempts                                 |
+| 500    | `INTERNAL_ERROR`           | Anything unexpected (message hidden in production)                               |
 
 Throw `new HttpError(status, code, message, details?)` (`server/src/lib/errors.js`) from any route
 to produce one of these.
@@ -190,8 +352,13 @@ to produce one of these.
 - `requireAuth` (`server/src/middleware/requireAuth.js`) verifies the cookie, loads the user from
   the database and sets `req.user` (public fields). A deleted user's token stops working
   immediately.
-- **Logout** clears the cookie. The JWT itself isn't revoked server-side (stateless sessions): a
-  copied token stays valid until it expires. Rotating `JWT_SECRET` logs everyone out.
+- **Token versioning:** the JWT carries `ver`, the user's `tokenVersion` when it was signed.
+  `requireAuth` and the socket handshake reject a token whose `ver` is older than the current
+  `tokenVersion` (tokens from before versioning count as version 0). See
+  [Settings and session revocation](#settings-and-session-revocation).
+- **Logout** clears this browser's cookie only. Other sessions stay valid until they expire or the
+  user changes their password or uses "Log out of all devices". Rotating `JWT_SECRET` logs
+  everyone out.
 - Auth responses are sent with `Cache-Control: no-store`.
 
 ### Socket.io
@@ -202,7 +369,8 @@ The Socket.io handshake is authenticated with the same cookie
 `{ code: 'UNAUTHORIZED', message }`. Accepted sockets have `socket.data.user` (public fields), and
 the server emits a `session` event with `{ user }` right after connecting. Each socket joins a
 per-user room (`user:<id>`), so server events reach all of a user's tabs. Duel events are listed
-in [Socket events](#socket-events).
+in [Socket events](#socket-events). When a user's sessions are revoked, every socket of theirs
+holding an older token gets `session:revoked` and is disconnected by the server.
 
 ### Client
 
@@ -211,11 +379,16 @@ in [Socket events](#socket-events).
 - `ProtectedRoute` sends guests to `/login` (and back to the page they wanted after logging in).
   `GuestRoute` sends logged-in users away from `/login` and `/register`.
 - `hooks/useSocketLifecycle.js` connects the socket only while authenticated and disconnects it
-  on logout.
+  on logout. When the server disconnects the socket, it checks `/api/auth/session`: if the session
+  is still valid (e.g. this tab just changed the password and got a fresh cookie), it reconnects.
+  Otherwise it sends the user to `/login` with "You were logged out because your session was
+  ended on another device."
+- `store/connectionStore.js` tracks the socket state; `ConnectionBanner` shows "Connection lost.
+  Reconnecting…" while a socket that was connected is trying to come back.
 
 ## Tests
 
-The server test suite (Vitest + supertest + socket.io-client) has three layers:
+The server test suite (Vitest + supertest + socket.io-client): **219 tests in 17 files**.
 
 - **Unit tests**: output comparison, go-judge status mapping and request units, harness generation,
   verdict building and sample/hidden merging (`test/judge/`). Also duels (`test/match/`), using
@@ -242,6 +415,12 @@ The server test suite (Vitest + supertest + socket.io-client) has three layers:
   connections against the real server, MySQL and go-judge. Covers a full ranked match with ELO in
   the DB, a private room with rematch, rejoin after a disconnect, the disconnect loss, and a scan
   of every event and ack payload proving hidden test data never appears.
+- **Settings and public stats tests** (`test/settings.test.js`): `GET /api/stats/public` needs
+  no auth and is cached for 60 s. Password change: requires the current password, validates the
+  new one like register, keeps this session with a fresh cookie, rejects the old token afterwards
+  and is rate-limited. "Log out of all devices" and normal logout, legacy tokens without `ver`,
+  `GET /api/auth/session` and preferences. Socket revocation: other sessions' sockets are
+  disconnected and an old token is rejected at the handshake, while other users stay connected.
 
 ```bash
 cp server/.env.test.example server/.env.test   # once; set the same DB password as server/.env
@@ -444,17 +623,19 @@ integration test scans all of them).
 
 | Route                          | What it shows                                                                                                             |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `/`                            | Play: ranked queue, private rooms, join by code, your ELO and W/L/D                                                       |
+| `/` (logged out)               | Landing page: hero with an animated mock duel, features, "how it works", live public stats, footer                        |
+| `/` (logged in)                | Play: ranked queue, private rooms, join by code, your ELO and W/L/D                                                       |
 | `/problems`, `/practice/:slug` | Problem list and the practice editor                                                                                      |
 | `/leaderboard`                 | Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row when you're on another page |
 | `/u/:username`                 | Public profile: stats, ELO history chart (hover for date + ELO), solved by difficulty, match history with a mode filter   |
 | `/matches/:id`                 | Match details: summary, side-by-side submission timeline, and both final codes (participants only, after the match)       |
 | `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px it uses Problem / Editor / Results tabs.                            |
 | `/join/:code`                  | Invite link to a private room                                                                                             |
+| `/settings`                    | Change password, log out of all devices, default editor language                                                          |
 | anything else                  | 404 page (also for unknown players and matches)                                                                           |
 
 Every logged-in page except the arena has the navbar (Play, Practice, Leaderboard, My profile,
-your ELO, Log out; a menu button on phones). Usernames link to profiles everywhere. All pages
+Settings, the sound toggle, your ELO, Log out; a menu button below 1024 px). Usernames link to profiles everywhere. All pages
 work down to 375 px with no horizontal scrolling.
 
 ### Endpoints
@@ -501,6 +682,111 @@ createdAt)` for the leaderboard; `Match(player1Id, endedAt)` and `Match(player2I
   history; `Submission(matchId, userId, createdAt)` for timelines and last submissions.
 - Each endpoint runs a **fixed number of queries**, whatever the number of matches. The test
   suite counts them through Prisma query events.
+
+## Settings and session revocation
+
+| Method | Path                        | Body                               | Success                                 | Errors        |
+| ------ | --------------------------- | ---------------------------------- | --------------------------------------- | ------------- |
+| POST   | `/api/settings/password`    | `{ currentPassword, newPassword }` | `200 { user }` + a fresh session cookie | 400, 401, 429 |
+| POST   | `/api/settings/logout-all`  | none                               | `204`, clears the cookie                | 401           |
+| PATCH  | `/api/settings/preferences` | `{ preferredLanguage }`            | `200 { user }`                          | 400, 401      |
+
+- All three need the session cookie and are sent with `Cache-Control: no-store`.
+- **Password change:** a wrong `currentPassword` gives `400 INVALID_CURRENT_PASSWORD`. The new
+  password follows the register rules (8 characters to 72 bytes) and must differ from the current
+  one. Rate limit: **5 attempts per 15 minutes per user**.
+- **Revocation:** `User.tokenVersion` (migration `20261120090000_settings_token_version`) is
+  embedded in every JWT as `ver`. A password change or "log out of all devices" increments it in
+  the database. Then:
+  1. every older token is rejected by `requireAuth` and by the Socket.io handshake;
+  2. `lib/sessionEvents.js` emits an in-process `sessions-revoked` event;
+  3. the socket layer disconnects that user's sockets holding an older version (after a
+     `session:revoked` event).
+
+  The password change answers with a cookie carrying the new version, so the tab that made the
+  change stays logged in. Normal logout doesn't change the version.
+
+- **Default language:** `User.preferredLanguage` (`javascript` | `python`) is the editor's
+  starting language in practice and in matches (a language you already picked for that problem or
+  match, kept in `localStorage`, still wins).
+
+## Public stats
+
+`GET /api/stats/public` needs no auth. It powers the landing page:
+
+```json
+{
+  "players": 3,
+  "finishedMatches": 4,
+  "problems": { "EASY": 5, "MEDIUM": 7, "HARD": 4, "total": 16 },
+  "generatedAt": "2026-11-20T15:27:00.000Z"
+}
+```
+
+It is cached in memory for 60 s (`services/stats.service.js`, 3 queries per refresh), with
+`Cache-Control: public, max-age=60`. It contains only counts: no usernames.
+
+## Design system, states and game feel
+
+- **Tokens** (`client/src/index.css`, Tailwind 4 `@theme`): the single source for colors,
+  fonts, radius, shadows and animations.
+  - The zinc / emerald / sky scales are redefined, so every Tailwind class uses the "arena night"
+    palette: green for you and primary actions, blue for the rival.
+  - Semantic aliases: `bg-canvas`, `bg-surface`, `border-line`, `text-ink-muted`,
+    `text-accent`, `shadow-glow`, …
+  - Text greys are tuned for WCAG AA contrast.
+- **Fonts:** self-hosted through Fontsource (no font CDN): Chakra Petch for headings, JetBrains
+  Mono for code and numbers.
+- **UI kit** (`client/src/components/ui/`): Button (variants, sizes, loading), Input, Select,
+  FormField, Card, Badge, Modal (focus trap, Esc, initial focus on the safe action), Toast, Tabs
+  (roving focus, arrow keys / Home / End), Skeleton, EmptyState and ErrorState (with Retry).
+  Hover, active, `focus-visible` and disabled states are consistent everywhere.
+- **States:** every data page has a skeleton while loading, an empty state with an action, and an
+  error state with Retry (`hooks/useApi.js`). A global banner appears while the socket reconnects.
+- **Game feel:**
+  - Match found: a pop-in animation and a sound.
+  - Countdown: a big animated 3-2-1 with a tick sound, then a "go" sound.
+  - When the opponent passes more tests: a sound and a toast.
+  - Win: canvas confetti and a fanfare. Loss and draw get calmer animations.
+- **Sounds** (`lib/sound.js`) are synthesized with the Web Audio API: no audio files.
+  - The audio context unlocks on the first click or key press.
+  - Sound is on by default. The speaker button in the navbar and the arena header mutes it, saved
+    in `localStorage` (`code-duel:sound`).
+- **Reduced motion:** with `prefers-reduced-motion: reduce`, animations and transitions are cut
+  to near zero and there is no confetti.
+
+## Accessibility and performance
+
+- Keyboard: every control is reachable, with visible focus rings. Modals trap focus and close
+  with Esc, and the arena tabs follow the ARIA tabs pattern. Skip link, labelled icon buttons,
+  `aria-live` regions for results, the timer and toasts.
+- Every page is a lazy route chunk (`React.lazy` in `App.jsx`); Monaco loads only on editor
+  pages.
+- **Lighthouse 13** (production build via `vite preview`, headless Chrome, default mobile
+  emulation):
+
+  | Page                       | Performance | Accessibility | Best Practices |
+  | -------------------------- | ----------- | ------------- | -------------- |
+  | `/` (landing, logged out)  | 95          | 100           | 100            |
+  | `/leaderboard` (logged in) | 96          | 100           | 100            |
+
+- SEO and sharing: `index.html` has a description and Open Graph / Twitter card tags with a
+  1200×630 `og-image.png`. `client/public/` holds a full favicon set (SVG, ICO, 16/32 px PNG,
+  Apple touch icon, 192/512 px and a maskable icon) and `site.webmanifest`.
+
+### README media
+
+`npm run docs:icons` and `npm run docs:capture` drive headless Chrome over the DevTools protocol
+(`scripts/docs/browser.mjs`, no Puppeteer dependency) against the running dev stack.
+
+- `docs:icons` renders the favicons from `favicon.svg` and screenshots the dev-only `/og` route
+  into `og-image.png`.
+- `docs:capture` takes the landing screenshot, registers two demo accounts and plays three real
+  ranked duels, recording the GIF during the first. It then captures the arena (desktop and
+  375 px), result, leaderboard, profile and practice screenshots.
+- Requirements: Google Chrome (or `CHROME_PATH`), `ffmpeg` (GIF) and ImageMagick (`.ico`).
+- To type code into Monaco, the scripts use `window.__codeDuelEditor`, which only exists in
+  development builds.
 
 ## Problems & practice API
 
@@ -549,20 +835,23 @@ All endpoints require the session cookie.
 ```
 code-duel/
 ├── client/                    # React app (Vite)
-│   ├── index.html
-│   ├── vite.config.js         # Tailwind plugin, @ → src alias, /api + /socket.io proxy
+│   ├── index.html             # meta, Open Graph / Twitter tags, icons, manifest
+│   ├── public/                # favicons, og-image.png, site.webmanifest, robots.txt
+│   ├── vite.config.js         # Tailwind plugin, @ → src alias, /api + /socket.io proxy (dev + preview)
 │   └── src/
-│       ├── components/        # route guards, badges, UserLink, Modal, Pagination, form + UI components
-│       │   ├── layout/        # AppLayout + Navbar
+│       ├── components/        # route guards, badges, UserLink, Logo, MuteToggle, Pagination
+│       │   ├── ui/            # design-system kit: Button, Input, Select, Card, Badge, Modal, Toast, Tabs, Skeleton, Empty/ErrorState
+│       │   ├── landing/       # MockDuel (animated hero), PublicStats
+│       │   ├── layout/        # AppLayout, Navbar, ConnectionBanner
 │       │   ├── practice/      # CodeEditor (Monaco), ResultsPanel, ProblemStatement, LanguageSelect
-│       │   ├── match/         # timer, player progress, countdown, result modal
+│       │   ├── match/         # timer, player progress, countdown, result modal, confetti
 │       │   └── profile/       # EloChart (hand-written SVG)
-│       ├── hooks/             # useApiForm, useHealth, useSocketLifecycle, usePlaySession, …
-│       ├── lib/               # api, socket, monaco (self-hosted), markdown, storage, verdicts
-│       ├── pages/             # Home, Problems, Practice, Leaderboard, Profile, MatchDetails, Match, Join, 404, …
-│       ├── store/             # authStore, connectionStore, playStore (Zustand)
-│       ├── App.jsx            # routes
-│       ├── index.css          # Tailwind entry
+│       ├── hooks/             # useApi, useApiForm, useReducedMotion, useSocketLifecycle, usePlaySession, …
+│       ├── lib/               # api, socket, sound (Web Audio), monaco (self-hosted), markdown, storage, site
+│       ├── pages/             # Landing, Home, Problems, Practice, Leaderboard, Profile, MatchDetails, Match, Settings, …
+│       ├── store/             # authStore, connectionStore, playStore, preferencesStore (Zustand)
+│       ├── App.jsx            # lazy-loaded routes
+│       ├── index.css          # Tailwind entry + design tokens (@theme)
 │       └── main.jsx
 ├── server/                    # Express + Socket.io API
 │   ├── prisma/
@@ -575,17 +864,19 @@ code-duel/
 │   └── src/
 │       ├── config/env.js      # Zod-validated env
 │       ├── controllers/
-│       ├── routes/            # /api/health, auth, problems, practice, leaderboard, users, matches
+│       ├── routes/            # /api/health, auth, problems, practice, leaderboard, users, matches, settings, stats
 │       ├── middleware/        # errorHandler, notFound, requireAuth, rateLimit, validate
 │       ├── socket/            # Socket.io setup, cookie auth, handlers/ (queue, room, match)
-│       ├── services/          # auth, problem, practice, elo, leaderboard, profile, matchDetails
+│       ├── services/          # auth, problem, practice, elo, leaderboard, profile, matchDetails, stats
 │       │   ├── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
 │       │   └── match/         # MatchManager, matchmaker, problemPicker, roomCodes, matchRepository
 │       ├── validators/        # Zod request schemas
-│       ├── lib/               # prisma, jwt, authCookie, publicUser, errors
+│       ├── lib/               # prisma, jwt, authCookie, publicUser, errors, sessionEvents
 │       ├── generated/prisma/  # generated Prisma client (gitignored)
 │       ├── app.js             # Express app
 │       └── index.js           # HTTP server + Socket.io + graceful shutdown
+├── docs/                      # demo.gif + screenshots/ (README media)
+├── scripts/docs/              # headless-Chrome scripts: icons.mjs, capture.mjs, browser.mjs
 ├── infra/
 │   ├── docker-compose.yml     # MySQL 8.4 + go-judge
 │   ├── mysql/init/            # first-boot SQL (grants needed for Prisma's shadow DB)
@@ -617,3 +908,5 @@ code-duel/
   into a new `prisma/migrations/<timestamp>_<name>/migration.sql`, then run
   `npx prisma migrate deploy` (from `server/`).
 - Monaco is bundled locally (not loaded from a CDN) and only on the lazy practice page.
+- `og:image` is a relative URL for now, and there is no `og:url`. Social networks need absolute
+  URLs, so make both absolute once the app has a domain.

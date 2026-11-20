@@ -1,5 +1,5 @@
 import Editor from '@monaco-editor/react';
-import Spinner from '@/components/Spinner.jsx';
+import Spinner from '@/components/ui/Spinner.jsx';
 import '@/lib/monaco.js';
 
 /** Read-only Monaco editor (match details). */

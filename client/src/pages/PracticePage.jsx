@@ -1,29 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import Button from '@/components/Button.jsx';
-import FullPageSpinner from '@/components/FullPageSpinner.jsx';
+import Button from '@/components/ui/Button.jsx';
+import ErrorState from '@/components/ui/ErrorState.jsx';
+import Modal from '@/components/ui/Modal.jsx';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import CodeEditor from '@/components/practice/CodeEditor.jsx';
 import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
 import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
 import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
 import { paramNames } from '@/components/practice/params.js';
+import { useApi } from '@/hooks/useApi.js';
 import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { api } from '@/lib/api.js';
 import { loadItem, removeItem, saveItem } from '@/lib/storage.js';
-import { LANGUAGES } from '@/lib/verdicts.js';
+import NotFoundPage from '@/pages/NotFoundPage.jsx';
+import { useAuthStore } from '@/store/authStore.js';
 
-const LANGUAGE_KEY = 'code-duel:language';
 const codeKey = (slug, language) => `code-duel:code:${slug}:${language}`;
+const languageKey = (slug) => `code-duel:practice:${slug}:language`;
 const FILE_EXTENSIONS = { javascript: 'js', python: 'py' };
 
-function initialLanguage() {
-  const saved = loadItem(LANGUAGE_KEY);
-  return LANGUAGES.some((l) => l.id === saved) ? saved : 'javascript';
+/** The language last used on this problem, otherwise the account's default (Settings). */
+function initialLanguage(slug, preferred) {
+  const saved = loadItem(languageKey(slug));
+  if (saved in FILE_EXTENSIONS) return saved;
+  return preferred in FILE_EXTENSIONS ? preferred : 'javascript';
 }
 
 function Workspace({ problem }) {
   const { slug } = problem;
-  const [language, setLanguage] = useState(initialLanguage);
+  const preferredLanguage = useAuthStore((s) => s.user?.preferredLanguage);
+  const [language, setLanguage] = useState(() => initialLanguage(slug, preferredLanguage));
+  const [confirmReset, setConfirmReset] = useState(false);
   const [code, setCode] = useState(
     () => loadItem(codeKey(slug, language)) ?? problem.starterCode[language],
   );
@@ -43,18 +51,13 @@ function Workspace({ problem }) {
   function changeLanguage(next) {
     setLanguage(next);
     setCode(loadItem(codeKey(slug, next)) ?? problem.starterCode[next]);
-    saveItem(LANGUAGE_KEY, next);
+    saveItem(languageKey(slug), next);
   }
 
   function resetCode() {
-    if (
-      !window.confirm(
-        'Reset to the starter code? Your current code for this language will be lost.',
-      )
-    )
-      return;
     setCode(problem.starterCode[language]);
     removeItem(codeKey(slug, language));
+    setConfirmReset(false);
   }
 
   const execute = useCallback(
@@ -89,8 +92,8 @@ function Workspace({ problem }) {
 
   return (
     <div className="flex flex-col lg:h-[calc(100dvh-3.5rem)]">
-      <header className="flex flex-wrap items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3">
-        <Link to="/problems" className="text-sm text-zinc-400 hover:text-zinc-200">
+      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-canvas/90 px-4 py-3">
+        <Link to="/problems" className="rounded text-sm text-ink-muted hover:text-ink">
           ← Problems
         </Link>
         <span className="hidden truncate text-sm font-medium text-zinc-200 sm:inline">
@@ -100,7 +103,7 @@ function Workspace({ problem }) {
           <LanguageSelect value={language} onChange={changeLanguage} disabled={Boolean(running)} />
           <Button
             variant="secondary"
-            onClick={resetCode}
+            onClick={() => setConfirmReset(true)}
             disabled={Boolean(running)}
             title="Reset to starter code"
           >
@@ -157,37 +160,69 @@ function Workspace({ problem }) {
           </div>
         </section>
       </div>
+
+      <Modal
+        open={confirmReset}
+        title="Reset your code?"
+        onClose={() => setConfirmReset(false)}
+        tone="danger"
+      >
+        <p className="text-sm text-zinc-300">
+          Your current {language === 'python' ? 'Python' : 'JavaScript'} code for this problem will
+          be replaced by the starter code.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setConfirmReset(false)} data-autofocus>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={resetCode}>
+            Reset code
+          </Button>
+        </div>
+      </Modal>
     </div>
+  );
+}
+
+function PracticeSkeleton() {
+  return (
+    <SkeletonGroup
+      label="Loading problem"
+      className="grid flex-1 gap-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
+    >
+      <div className="space-y-4 p-5 lg:p-6">
+        <Skeleton className="h-7 w-56" />
+        <Skeleton className="h-5 w-24 rounded-full" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-4/5" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+      </div>
+      <Skeleton className="m-4 min-h-96 rounded-xl" />
+    </SkeletonGroup>
   );
 }
 
 export default function PracticePage() {
   const { slug } = useParams();
-  const [state, setState] = useState({ slug: null, problem: null, error: null });
+  const { data, error, loading, retry } = useApi(`/problems/${slug}`);
 
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get(`/problems/${slug}`)
-      .then((data) => !cancelled && setState({ slug, problem: data.problem, error: null }))
-      .catch((error) => !cancelled && setState({ slug, problem: null, error }));
-    return () => {
-      cancelled = true;
-    };
-  }, [slug]);
-
-  if (state.slug !== slug) return <FullPageSpinner />;
-  if (state.error) {
+  if (error?.status === 404)
     return (
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-24 text-center">
-        <p className="text-lg font-semibold">
-          {state.error.status === 404 ? 'Problem not found' : state.error.message}
+      <NotFoundPage title="Problem not found" message={`There is no problem called "${slug}".`} />
+    );
+  if (error) {
+    return (
+      <main className="mx-auto w-full max-w-3xl px-4 py-12">
+        <ErrorState message={error.message} onRetry={retry} />
+        <p className="mt-4 text-center">
+          <Link to="/problems" className="rounded text-sm text-accent hover:text-emerald-300">
+            ← Back to problems
+          </Link>
         </p>
-        <Link to="/problems" className="text-sm text-emerald-400 hover:text-emerald-300">
-          ← Back to problems
-        </Link>
       </main>
     );
   }
-  return <Workspace key={slug} problem={state.problem} />;
+  if (loading) return <PracticeSkeleton />;
+  return <Workspace key={slug} problem={data.problem} />;
 }

@@ -1,52 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Link } from 'react-router';
-import Button from '@/components/Button.jsx';
 import FormError from '@/components/FormError.jsx';
 import { formatClock } from '@/components/match/format.js';
+import Button from '@/components/ui/Button.jsx';
+import Card from '@/components/ui/Card.jsx';
+import Input from '@/components/ui/Input.jsx';
+import Select from '@/components/ui/Select.jsx';
 import { request } from '@/lib/socket.js';
 import { useAuthStore } from '@/store/authStore.js';
 import { useConnectionStore } from '@/store/connectionStore.js';
 import { usePlayStore } from '@/store/playStore.js';
 
 const ROOM_DIFFICULTIES = [
-  { id: 'ANY', label: 'Any difficulty' },
-  { id: 'EASY', label: 'Easy' },
-  { id: 'MEDIUM', label: 'Medium' },
-  { id: 'HARD', label: 'Hard' },
+  { value: 'ANY', label: 'Any difficulty' },
+  { value: 'EASY', label: 'Easy' },
+  { value: 'MEDIUM', label: 'Medium' },
+  { value: 'HARD', label: 'Hard' },
 ];
 
-function Stat({ label, value, className = 'text-zinc-100' }) {
+function Stat({ label, value, className = 'text-ink' }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3 text-center">
-      <dt className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{label}</dt>
+    <div className="rounded-xl border border-line bg-canvas/50 px-4 py-3 text-center">
+      <dt className="eyebrow">{label}</dt>
       <dd className={`mt-1 font-mono text-2xl font-semibold ${className}`}>{value}</dd>
     </div>
   );
 }
 
-function Panel({ title, children }) {
+function Panel({ title, children, glow }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <h2 className="text-sm font-semibold tracking-wide text-zinc-400 uppercase">{title}</h2>
+    <Card as="section" className="space-y-4" padding="p-5" glow={glow}>
+      <h2 className="eyebrow">{title}</h2>
       {children}
-    </section>
+    </Card>
   );
 }
 
 function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
   if (queue) {
     return (
-      <Panel title="Ranked">
+      <Panel title="Ranked" glow="accent">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="flex items-center gap-2 font-medium text-zinc-100">
-              <span
-                className="size-2 animate-ping rounded-full bg-emerald-400"
-                aria-hidden="true"
-              />
+            <p className="flex items-center gap-2 font-medium text-ink">
+              <span className="relative flex size-2.5" aria-hidden="true">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-75" />
+                <span className="relative inline-flex size-2.5 rounded-full bg-accent" />
+              </span>
               Searching for an opponent…
             </p>
-            <p className="mt-1 font-mono text-sm text-zinc-400" aria-live="polite">
+            <p className="mt-1 font-mono text-sm text-ink-muted" aria-live="polite">
               {formatClock(queue.elapsedMs ?? 0)} ·{' '}
               {queue.window ? `±${queue.window} ELO` : 'any ELO'}
             </p>
@@ -60,10 +63,16 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
   }
   return (
     <Panel title="Ranked">
-      <p className="text-sm text-zinc-400">
+      <p className="text-sm text-ink-muted">
         Get matched with a player of similar ELO. Wins and losses change your rating.
       </p>
-      <Button onClick={onPlay} loading={busy} disabled={disabled} className="w-full">
+      <Button
+        onClick={onPlay}
+        loading={busy}
+        disabled={disabled}
+        size="lg"
+        className="w-full font-display tracking-wide uppercase"
+      >
         Play ranked
       </Button>
     </Panel>
@@ -71,6 +80,7 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
 }
 
 function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
+  const selectId = useId();
   const [difficulty, setDifficulty] = useState('ANY');
   const [copied, setCopied] = useState(null);
   const inviteLink = room ? `${window.location.origin}/join/${room.code}` : '';
@@ -87,18 +97,18 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
 
   if (room) {
     return (
-      <Panel title="Private room">
+      <Panel title="Private room" glow="rival">
         <div className="space-y-3 text-center">
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-ink-muted">
             Share this code or the invite link. Unranked: no ELO change.
           </p>
           <p
-            className="font-mono text-4xl font-bold tracking-[0.3em] text-emerald-400"
+            className="font-mono text-4xl font-bold tracking-[0.3em] text-sky-300"
             data-testid="room-code"
           >
             {room.code}
           </p>
-          <p className="animate-pulse text-xs text-zinc-500">
+          <p className="animate-pulse text-xs text-ink-subtle">
             Waiting for your opponent… (expires in 10 min)
           </p>
           <div className="flex flex-wrap justify-center gap-2">
@@ -108,12 +118,12 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
             <Button variant="secondary" onClick={() => copy(room.code, 'code')}>
               {copied === 'code' ? 'Copied!' : 'Copy code'}
             </Button>
-            <Button variant="secondary" onClick={onClose} loading={busy}>
+            <Button variant="ghost" onClick={onClose} loading={busy}>
               Close room
             </Button>
           </div>
           {copied === 'error' && (
-            <p className="text-xs text-zinc-400">Copy failed. Link: {inviteLink}</p>
+            <p className="text-xs text-ink-muted">Copy failed. Link: {inviteLink}</p>
           )}
         </div>
       </Panel>
@@ -122,21 +132,17 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
   return (
     <Panel title="Private room">
       <div className="flex flex-col gap-2 sm:flex-row">
-        <label className="sr-only" htmlFor="room-difficulty">
+        <label className="sr-only" htmlFor={selectId}>
           Difficulty
         </label>
-        <select
-          id="room-difficulty"
+        <Select
+          id={selectId}
+          data-testid="room-difficulty"
           value={difficulty}
           onChange={(e) => setDifficulty(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500"
-        >
-          {ROOM_DIFFICULTIES.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.label}
-            </option>
-          ))}
-        </select>
+          options={ROOM_DIFFICULTIES}
+          className="min-w-0 flex-1"
+        />
         <Button
           variant="secondary"
           onClick={() => onCreate(difficulty)}
@@ -151,6 +157,7 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
 }
 
 function JoinPanel({ busy, disabled, onJoin }) {
+  const inputId = useId();
   const [code, setCode] = useState('');
   return (
     <Panel title="Join a room">
@@ -161,17 +168,18 @@ function JoinPanel({ busy, disabled, onJoin }) {
           if (code.trim()) onJoin(code);
         }}
       >
-        <label className="sr-only" htmlFor="room-code">
+        <label className="sr-only" htmlFor={inputId}>
           Room code
         </label>
-        <input
-          id="room-code"
+        <Input
+          id={inputId}
+          data-testid="room-code-input"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           placeholder="ROOM CODE"
           maxLength={6}
           autoComplete="off"
-          className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950/60 px-3.5 py-2 font-mono tracking-widest text-zinc-100 uppercase outline-none placeholder:tracking-normal placeholder:text-zinc-600 focus:border-emerald-500"
+          className="min-w-0 flex-1 py-2 font-mono tracking-widest uppercase placeholder:tracking-normal"
         />
         <Button
           type="submit"
@@ -216,29 +224,31 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-4 py-8 sm:py-12">
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-xl shadow-black/30">
+      <Card as="section" className="motion-safe:animate-fade-up">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-sm text-zinc-400">Welcome back,</p>
+            <p className="text-sm text-ink-muted">Welcome back,</p>
             <h1 className="truncate text-2xl font-bold tracking-tight">{user.username}</h1>
           </div>
           <div className="text-right">
-            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">ELO</p>
-            <p className="font-mono text-3xl font-bold text-emerald-400" data-testid="elo">
+            <p className="eyebrow">ELO</p>
+            <p className="font-mono text-3xl font-bold text-accent" data-testid="elo">
               {user.elo}
             </p>
           </div>
         </div>
         <dl className="mt-6 grid grid-cols-3 gap-3">
-          <Stat label="Wins" value={user.wins} className="text-emerald-400" />
-          <Stat label="Losses" value={user.losses} className="text-red-400" />
+          <Stat label="Wins" value={user.wins} className="text-emerald-300" />
+          <Stat label="Losses" value={user.losses} className="text-red-300" />
           <Stat label="Draws" value={user.draws} className="text-zinc-300" />
         </dl>
-      </section>
+      </Card>
 
       <FormError>{error ?? notice}</FormError>
       {offline && (
-        <p className="text-center text-sm text-amber-300">Connecting to the game server…</p>
+        <p className="text-center text-sm text-amber-200" role="status">
+          Connecting to the game server…
+        </p>
       )}
 
       <RankedPanel
@@ -269,15 +279,15 @@ export default function HomePage() {
         </>
       )}
 
-      <p className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm text-zinc-500">
-        <Link to="/problems" className="hover:text-zinc-300">
+      <p className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm text-ink-subtle">
+        <Link to="/problems" className="rounded hover:text-ink">
           Practice problems
         </Link>
-        <Link to="/leaderboard" className="hover:text-zinc-300">
+        <Link to="/leaderboard" className="rounded hover:text-ink">
           Leaderboard
         </Link>
         {import.meta.env.DEV && (
-          <Link to="/dev/status" className="hover:text-zinc-300">
+          <Link to="/dev/status" className="rounded hover:text-ink">
             Dev status
           </Link>
         )}

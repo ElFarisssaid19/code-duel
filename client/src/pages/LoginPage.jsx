@@ -1,13 +1,14 @@
 import { Link, useLocation } from 'react-router';
 import AuthLayout from '@/components/AuthLayout.jsx';
-import Button from '@/components/Button.jsx';
+import Button from '@/components/ui/Button.jsx';
 import FormError from '@/components/FormError.jsx';
-import FormField from '@/components/FormField.jsx';
+import FormField from '@/components/ui/FormField.jsx';
 import { useApiForm } from '@/hooks/useApiForm.js';
 import { useAuthStore } from '@/store/authStore.js';
 
 export default function LoginPage() {
   const login = useAuthStore((s) => s.login);
+  const notice = useAuthStore((s) => s.notice);
   const location = useLocation();
   // On success the store flips to "authenticated" and GuestRoute redirects.
   const { values, fieldErrors, formError, submitting, handleChange, handleSubmit } = useApiForm(
@@ -33,6 +34,7 @@ export default function LoginPage() {
       }
     >
       <form className="space-y-5" onSubmit={handleSubmit} noValidate>
+        <FormError tone="info">{notice}</FormError>
         <FormError>{formError}</FormError>
         <FormField
           label="Username or email"

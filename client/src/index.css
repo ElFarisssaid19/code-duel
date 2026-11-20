@@ -1,7 +1,147 @@
 @import 'tailwindcss';
+/* Self-hosted fonts (no font CDN): display font for headings, monospace for code and numbers. */
+@import '@fontsource/chakra-petch/latin-500.css';
+@import '@fontsource/chakra-petch/latin-600.css';
+@import '@fontsource/chakra-petch/latin-700.css';
+@import '@fontsource-variable/jetbrains-mono';
 
 /* Dark mode is class-based: <html class="dark"> (see index.html). */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens: the single source of truth for colors, typography, radius, shadows and motion.
+ *
+ * The neutral (zinc) and accent (emerald / sky) scales are redefined here, so every existing
+ * Tailwind class (`bg-zinc-900`, `text-emerald-400`, …) uses the Code Duel palette. Shared UI
+ * components use the semantic aliases (`bg-surface`, `text-ink-muted`, `border-line`, …).
+ * Text greys (400–600) are tuned to stay at WCAG AA contrast (≥ 4.5:1) on surfaces.
+ */
+@theme {
+  /* Typography */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Chakra Petch', var(--font-sans);
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* Neutrals: "arena night", slightly cool */
+  --color-zinc-50: #f7f8fb;
+  --color-zinc-100: #eef1f7;
+  --color-zinc-200: #dfe3ee;
+  --color-zinc-300: #c6cddf;
+  --color-zinc-400: #a7b0c8;
+  --color-zinc-500: #8a95b3;
+  --color-zinc-600: #7480a0;
+  --color-zinc-700: #2c3448;
+  --color-zinc-800: #1b2131;
+  --color-zinc-900: #0f131d;
+  --color-zinc-950: #07090f;
+
+  /* Accent: electric green (you, primary actions, success) */
+  --color-emerald-300: #79f8c6;
+  --color-emerald-400: #34eaa2;
+  --color-emerald-500: #14cf89;
+  --color-emerald-600: #0aa86f;
+  --color-emerald-700: #08845a;
+  --color-emerald-900: #063d2a;
+  --color-emerald-950: #03231a;
+
+  /* Secondary accent: electric blue (the opponent) */
+  --color-sky-300: #93d6ff;
+  --color-sky-400: #52bcff;
+  --color-sky-500: #229fff;
+
+  /* Semantic aliases */
+  --color-canvas: var(--color-zinc-950);
+  --color-surface: var(--color-zinc-900);
+  --color-surface-raised: var(--color-zinc-800);
+  --color-line: var(--color-zinc-800);
+  --color-line-strong: var(--color-zinc-700);
+  --color-ink: var(--color-zinc-100);
+  --color-ink-muted: var(--color-zinc-400);
+  --color-ink-subtle: var(--color-zinc-500);
+  --color-accent: var(--color-emerald-400);
+  --color-accent-strong: var(--color-emerald-500);
+  --color-rival: var(--color-sky-400);
+
+  /* Radius: slightly sharp, competitive */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+
+  /* Shadows */
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 18px 40px -20px rgb(0 0 0 / 0.75);
+  --shadow-glow: 0 0 0 1px rgb(52 234 162 / 0.35), 0 10px 32px -10px rgb(52 234 162 / 0.45);
+  --shadow-glow-rival: 0 0 0 1px rgb(82 188 255 / 0.35), 0 10px 32px -10px rgb(82 188 255 / 0.45);
+
+  /* Motion */
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.2, 1.2);
+  --animate-pop-in: pop-in 0.45s var(--ease-snap) both;
+  --animate-fade-up: fade-up 0.5s ease-out both;
+  --animate-countdown: countdown 0.9s var(--ease-snap) both;
+  --animate-shake: shake 0.5s ease-in-out both;
+  --animate-glow-pulse: glow-pulse 1.6s ease-in-out infinite;
+
+  @keyframes pop-in {
+    0% {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes fade-up {
+    0% {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes countdown {
+    0% {
+      opacity: 0;
+      transform: scale(2.2);
+      filter: blur(6px);
+    }
+    35% {
+      opacity: 1;
+      transform: scale(1);
+      filter: blur(0);
+    }
+    100% {
+      opacity: 0.15;
+      transform: scale(0.85);
+    }
+  }
+  @keyframes shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20%,
+    60% {
+      transform: translateX(-6px);
+    }
+    40%,
+    80% {
+      transform: translateX(6px);
+    }
+  }
+  @keyframes glow-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgb(52 234 162 / 0.45);
+    }
+    50% {
+      box-shadow: 0 0 0 10px rgb(52 234 162 / 0);
+    }
+  }
+}
 
 @layer base {
   html {
@@ -9,7 +149,46 @@
   }
 
   body {
-    @apply min-h-screen bg-zinc-950 text-zinc-100 antialiased;
+    @apply min-h-screen bg-canvas text-ink antialiased;
+    /* Arena backdrop: two soft glows (you vs. rival) over a faint grid. */
+    background-image:
+      radial-gradient(60rem 28rem at 0% -8%, rgb(52 234 162 / 0.07), transparent 65%),
+      radial-gradient(50rem 26rem at 100% 0%, rgb(82 188 255 / 0.06), transparent 65%),
+      linear-gradient(rgb(255 255 255 / 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.018) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      44px 44px,
+      44px 44px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: 0.01em;
+  }
+
+  /* One focus style for every interactive element (keyboard users only). */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgb(52 234 162 / 0.3);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -21,16 +200,16 @@
   .markdown h1,
   .markdown h2,
   .markdown h3 {
-    @apply pt-2 font-semibold text-zinc-100;
+    @apply pt-2 font-semibold text-ink;
   }
   .markdown h3 {
     @apply text-base;
   }
   .markdown strong {
-    @apply font-semibold text-zinc-100;
+    @apply font-semibold text-ink;
   }
   .markdown a {
-    @apply text-emerald-400 underline underline-offset-2;
+    @apply text-accent underline underline-offset-2;
   }
   .markdown ul {
     @apply list-disc space-y-1.5 pl-5;
@@ -39,18 +218,21 @@
     @apply list-decimal space-y-1.5 pl-5;
   }
   .markdown code {
-    @apply rounded bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[0.85em] text-zinc-200;
+    @apply rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[0.85em] text-zinc-200;
   }
   .markdown pre {
-    @apply overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950/70 p-3.5 leading-normal;
+    @apply overflow-x-auto rounded-lg border border-line bg-canvas/70 p-3.5 leading-normal;
   }
   .markdown pre code {
     @apply bg-transparent p-0 text-[0.85rem];
   }
-}
 
-@layer components {
   .kbd {
-    @apply rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-mono text-[0.75rem] text-zinc-300;
+    @apply rounded border border-line-strong bg-surface-raised px-1.5 py-0.5 font-mono text-[0.75rem] text-zinc-300;
+  }
+
+  /* Section eyebrow label, e.g. "RANKED" above a panel. */
+  .eyebrow {
+    @apply font-display text-xs font-semibold tracking-[0.18em] text-ink-subtle uppercase;
   }
 }

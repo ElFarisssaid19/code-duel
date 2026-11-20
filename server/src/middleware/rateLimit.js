@@ -36,6 +36,14 @@ export const practiceRateLimit = limiter({
   keyGenerator: (req) => `user:${req.user.id}`,
 });
 
+/** Password changes: 5 attempts per 15 minutes per user (needs requireAuth). */
+export const passwordChangeRateLimit = limiter({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  message: 'Too many password change attempts. Please try again in a few minutes.',
+  keyGenerator: (req) => `user:${req.user.id}`,
+});
+
 /** Clears all rate-limit counters (used by tests). */
 export async function resetRateLimits() {
   await Promise.all(stores.map((s) => s.resetAll()));

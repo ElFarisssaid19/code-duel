@@ -1,19 +1,21 @@
+import { Link } from 'react-router';
+import Logo from '@/components/Logo.jsx';
+import Card from '@/components/ui/Card.jsx';
+
 /** Centered card used by the login and register pages. */
 export default function AuthLayout({ title, subtitle, children, footer }) {
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-sm space-y-8">
+    <main className="flex min-h-dvh items-center justify-center px-4 py-12">
+      <div className="w-full max-w-sm space-y-8 motion-safe:animate-fade-up">
         <div className="space-y-2 text-center">
-          <p className="text-2xl font-bold tracking-tight">
-            Code <span className="text-emerald-400">Duel</span>
-          </p>
-          <h1 className="text-lg font-semibold text-zinc-100">{title}</h1>
-          {subtitle && <p className="text-sm text-zinc-400">{subtitle}</p>}
+          <Link to="/" className="inline-block" aria-label="Code Duel home">
+            <Logo className="text-2xl" />
+          </Link>
+          <h1 className="text-lg font-semibold text-ink">{title}</h1>
+          {subtitle && <p className="text-sm text-ink-muted">{subtitle}</p>}
         </div>
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-xl shadow-black/30">
-          {children}
-        </div>
-        {footer && <p className="text-center text-sm text-zinc-400">{footer}</p>}
+        <Card>{children}</Card>
+        {footer && <p className="text-center text-sm text-ink-muted">{footer}</p>}
       </div>
     </main>
   );

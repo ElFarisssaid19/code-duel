@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import DifficultyBadge from '@/components/DifficultyBadge.jsx';
 import EloDelta from '@/components/EloDelta.jsx';
-import FormError from '@/components/FormError.jsx';
 import Pagination from '@/components/Pagination.jsx';
 import ResultBadge from '@/components/ResultBadge.jsx';
-import Spinner from '@/components/Spinner.jsx';
 import UserLink from '@/components/UserLink.jsx';
 import { formatClock, REASON_LABELS } from '@/components/match/format.js';
 import EloChart from '@/components/profile/EloChart.jsx';
-import { api } from '@/lib/api.js';
+import Card from '@/components/ui/Card.jsx';
+import EmptyState from '@/components/ui/EmptyState.jsx';
+import ErrorState from '@/components/ui/ErrorState.jsx';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
+import Tabs from '@/components/ui/Tabs.jsx';
+import { buttonClasses } from '@/components/ui/styles.js';
+import { useApi } from '@/hooks/useApi.js';
 import NotFoundPage from '@/pages/NotFoundPage.jsx';
+import { useAuthStore } from '@/store/authStore.js';
 
 const LANGUAGE_LABELS = { javascript: 'JavaScript', python: 'Python' };
 const MODES = [
@@ -23,15 +27,34 @@ const formatDate = (iso, opts = { year: 'numeric', month: 'short', day: 'numeric
 
 function Stat({ label, children, hint }) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3">
-      <dt className="text-xs font-medium tracking-wide text-zinc-500 uppercase">{label}</dt>
-      <dd className="mt-1 font-mono text-xl font-semibold text-zinc-100">{children}</dd>
-      {hint && <p className="mt-0.5 text-xs text-zinc-500">{hint}</p>}
+    <div className="rounded-xl border border-line bg-canvas/50 px-4 py-3">
+      <dt className="eyebrow">{label}</dt>
+      <dd className="mt-1 font-mono text-xl font-semibold text-ink">{children}</dd>
+      {hint && <p className="mt-0.5 text-xs text-ink-subtle">{hint}</p>}
     </div>
   );
 }
 
-function SolvedBreakdown({ solved }) {
+function SolvedBreakdown({ solved, own }) {
+  if (solved.total === 0) {
+    return (
+      <EmptyState
+        icon="✓"
+        title="No problems solved yet"
+        description={
+          own ? 'Solve a practice problem to start filling this in.' : 'Nothing solved so far.'
+        }
+        action={
+          own && (
+            <Link to="/problems" className={buttonClasses({ size: 'sm', variant: 'secondary' })}>
+              Browse problems
+            </Link>
+          )
+        }
+        className="py-6"
+      />
+    );
+  }
   const rows = [
     { key: 'EASY', bar: 'bg-emerald-500' },
     { key: 'MEDIUM', bar: 'bg-amber-400' },
@@ -45,7 +68,11 @@ function SolvedBreakdown({ solved }) {
           <div className="w-20 shrink-0">
             <DifficultyBadge difficulty={key} />
           </div>
-          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className="h-2.5 flex-1 overflow-hidden rounded-full bg-zinc-800"
+            role="img"
+            aria-label={`${solved[key]} ${key.toLowerCase()} problems solved`}
+          >
             <div
               className={`h-full rounded-full ${bar}`}
               style={{ width: `${(solved[key] / max) * 100}%` }}
@@ -54,7 +81,7 @@ function SolvedBreakdown({ solved }) {
           <span className="w-8 text-right font-mono text-sm text-zinc-200">{solved[key]}</span>
         </div>
       ))}
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-ink-subtle">
         {solved.total} distinct problems solved (practice and matches).
       </p>
     </div>
@@ -67,20 +94,20 @@ function MatchRow({ match }) {
       <ResultBadge result={match.result} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">
-          <span className="text-zinc-500">vs </span>
-          <UserLink username={match.opponent.username} className="font-medium text-zinc-100" />
-          <span className="ml-1.5 font-mono text-xs text-zinc-500">{match.opponent.elo}</span>
+          <span className="text-ink-subtle">vs </span>
+          <UserLink username={match.opponent.username} className="font-medium text-ink" />
+          <span className="ml-1.5 font-mono text-xs text-ink-subtle">{match.opponent.elo}</span>
         </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
           <span className="truncate">{match.problem.title}</span>
           <DifficultyBadge difficulty={match.problem.difficulty} />
-          <span className="text-zinc-600">·</span>
+          <span aria-hidden="true">·</span>
           <span>{match.mode === 'RANKED' ? 'Ranked' : 'Private'}</span>
-          <span className="text-zinc-600">·</span>
+          <span aria-hidden="true">·</span>
           <span>{REASON_LABELS[match.endReason] ?? match.endReason}</span>
           {match.languages.length > 0 && (
             <>
-              <span className="text-zinc-600">·</span>
+              <span aria-hidden="true">·</span>
               <span>{match.languages.map((l) => LANGUAGE_LABELS[l] ?? l).join(', ')}</span>
             </>
           )}
@@ -91,7 +118,7 @@ function MatchRow({ match }) {
           <p className="font-mono text-zinc-300">
             {match.passed}/{match.total}
           </p>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-ink-subtle">
             {match.solveTimeMs !== null ? `solved ${formatClock(match.solveTimeMs)}` : 'tests'}
           </p>
         </div>
@@ -99,12 +126,13 @@ function MatchRow({ match }) {
           <EloDelta delta={match.eloChange} />
         </div>
         <div className="w-20">
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-ink-muted">
             {formatDate(match.date, { month: 'short', day: 'numeric' })}
           </p>
           <Link
             to={`/matches/${match.id}`}
-            className="text-xs font-medium text-emerald-400 hover:text-emerald-300"
+            className="rounded text-xs font-medium text-accent hover:text-emerald-300"
+            aria-label={`Details of the match against ${match.opponent.username}`}
           >
             Details →
           </Link>
@@ -114,120 +142,149 @@ function MatchRow({ match }) {
   );
 }
 
-function MatchHistory({ username }) {
+function HistorySkeleton() {
+  return (
+    <SkeletonGroup label="Loading match history">
+      <Card padding="p-0" className="divide-y divide-line overflow-hidden">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3.5">
+            <Skeleton className="size-7" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-3 w-64 max-w-full" />
+            </div>
+            <Skeleton className="h-4 w-10" />
+          </div>
+        ))}
+      </Card>
+    </SkeletonGroup>
+  );
+}
+
+function MatchHistory({ username, own }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = MODES.some((m) => m.id === searchParams.get('mode'))
     ? searchParams.get('mode')
     : 'all';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
-  const key = `${username}|${mode}|${page}`;
-  const [state, setState] = useState({ key: null, data: null, error: null });
+  const { data, error, loading, retry } = useApi(
+    `/users/${username}/matches?mode=${mode}&page=${page}`,
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .get(`/users/${username}/matches?mode=${mode}&page=${page}`)
-      .then((data) => !cancelled && setState({ key, data, error: null }))
-      .catch((err) => !cancelled && setState({ key, data: null, error: err.message }));
-    return () => {
-      cancelled = true;
-    };
-  }, [username, mode, page, key]);
-
-  const loading = state.key !== key;
   return (
-    <section className="space-y-4">
+    <section className="space-y-4" aria-labelledby="history-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Match history</h2>
-        <div
-          className="flex rounded-lg border border-zinc-800 p-0.5"
-          role="tablist"
-          aria-label="Mode"
-        >
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              role="tab"
-              aria-selected={mode === m.id}
-              onClick={() => setSearchParams(m.id === 'all' ? {} : { mode: m.id })}
-              className={`rounded-md px-3 py-1.5 text-sm transition ${mode === m.id ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        <h2 id="history-title" className="text-lg font-semibold">
+          Match history
+        </h2>
+        <Tabs
+          variant="pill"
+          label="Match mode"
+          tabs={MODES}
+          value={mode}
+          onChange={(id) => setSearchParams(id === 'all' ? {} : { mode: id })}
+        />
       </div>
-      <FormError>{state.error}</FormError>
-      {loading ? (
-        <div className="flex justify-center py-10 text-emerald-400">
-          <Spinner className="size-6" />
-        </div>
-      ) : (
-        state.data && (
-          <>
-            <ul className="divide-y divide-zinc-800 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
-              {state.data.matches.map((m) => (
-                <MatchRow key={m.id} match={m} />
-              ))}
-              {state.data.matches.length === 0 && (
-                <li className="px-4 py-10 text-center text-sm text-zinc-500">No matches yet.</li>
-              )}
-            </ul>
-            <Pagination
-              page={state.data.page}
-              totalPages={state.data.totalPages}
-              onChange={(p) =>
-                setSearchParams({ ...(mode !== 'all' && { mode }), page: String(p) })
-              }
-            />
-          </>
-        )
+      {loading && <HistorySkeleton />}
+      {error && <ErrorState message={error.message} onRetry={retry} />}
+      {data && data.matches.length === 0 && (
+        <Card>
+          <EmptyState
+            icon="⚔"
+            title={mode === 'all' ? 'No matches yet' : `No ${mode} matches yet`}
+            description={
+              own
+                ? 'Finished duels show up here, with links to their details.'
+                : 'This player has no finished matches here.'
+            }
+            action={
+              own && (
+                <Link to="/" className={buttonClasses({ size: 'sm' })}>
+                  Find a match
+                </Link>
+              )
+            }
+          />
+        </Card>
+      )}
+      {data && data.matches.length > 0 && (
+        <>
+          <Card as="ul" padding="p-0" className="divide-y divide-line overflow-hidden">
+            {data.matches.map((m) => (
+              <MatchRow key={m.id} match={m} />
+            ))}
+          </Card>
+          <Pagination
+            page={data.page}
+            totalPages={data.totalPages}
+            onChange={(p) => setSearchParams({ ...(mode !== 'all' && { mode }), page: String(p) })}
+          />
+        </>
       )}
     </section>
   );
 }
 
+function ProfileSkeleton() {
+  return (
+    <SkeletonGroup
+      label="Loading profile"
+      className="mx-auto w-full max-w-5xl space-y-8 px-4 py-8 sm:py-12"
+    >
+      <Card>
+        <div className="flex justify-between gap-4">
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-64 max-w-full" />
+          </div>
+          <Skeleton className="h-12 w-20" />
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }, (_, i) => (
+            <Skeleton key={i} className="h-20 rounded-xl" />
+          ))}
+        </div>
+      </Card>
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <Skeleton className="h-64 rounded-2xl" />
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+    </SkeletonGroup>
+  );
+}
+
 export default function ProfilePage() {
   const { username } = useParams();
-  const [state, setState] = useState({ username: null, profile: null, points: null, error: null });
+  const me = useAuthStore((s) => s.user);
+  const profileRes = useApi(`/users/${username}/profile`);
+  const historyRes = useApi(`/users/${username}/elo-history`);
 
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([api.get(`/users/${username}/profile`), api.get(`/users/${username}/elo-history`)])
-      .then(
-        ([{ profile }, { points }]) =>
-          !cancelled && setState({ username, profile, points, error: null }),
-      )
-      .catch((error) => !cancelled && setState({ username, profile: null, points: null, error }));
-    return () => {
-      cancelled = true;
-    };
-  }, [username]);
-
-  if (state.username !== username) {
-    return (
-      <div className="flex flex-1 items-center justify-center py-24 text-emerald-400">
-        <Spinner className="size-8" />
-      </div>
-    );
-  }
-  if (state.error?.status === 404)
+  if (profileRes.error?.status === 404)
     return (
       <NotFoundPage title="Player not found" message={`There is no player called "${username}".`} />
     );
-  if (state.error)
+  if (profileRes.error || historyRes.error) {
     return (
-      <main className="p-8">
-        <FormError>{state.error.message}</FormError>
+      <main className="mx-auto w-full max-w-5xl px-4 py-12">
+        <ErrorState
+          message={(profileRes.error ?? historyRes.error).message}
+          onRetry={() => {
+            profileRes.retry();
+            historyRes.retry();
+          }}
+        />
       </main>
     );
+  }
+  if (profileRes.loading || historyRes.loading) return <ProfileSkeleton />;
 
-  const { profile, points } = state;
+  const profile = profileRes.data.profile;
+  const points = historyRes.data.points;
+  const own = me?.username === profile.username;
   const streak = profile.currentStreak;
   return (
     <main className="mx-auto w-full max-w-5xl space-y-8 px-4 py-8 sm:py-12">
-      <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-xl shadow-black/30 sm:p-6">
+      <Card as="section" className="motion-safe:animate-fade-up" aria-label="Player stats">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1
@@ -236,7 +293,7 @@ export default function ProfilePage() {
             >
               {profile.username}
             </h1>
-            <p className="mt-1 text-sm text-zinc-400">
+            <p className="mt-1 text-sm text-ink-muted">
               Member since {formatDate(profile.memberSince)}
               {profile.favoriteLanguage && (
                 <>
@@ -248,22 +305,22 @@ export default function ProfilePage() {
             </p>
           </div>
           <div className="text-right">
-            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">ELO</p>
-            <p className="font-mono text-3xl font-bold text-emerald-400" data-testid="profile-elo">
+            <p className="eyebrow">ELO</p>
+            <p className="font-mono text-3xl font-bold text-accent" data-testid="profile-elo">
               {profile.elo}
             </p>
-            <p className="text-sm text-zinc-400" data-testid="profile-rank">
-              {profile.rank ? `Rank #${profile.rank}` : 'Unranked'}
+            <p className="text-sm text-ink-muted" data-testid="profile-rank">
+              {profile.rank ? `Rank #${profile.rank}` : 'No rank yet'}
             </p>
           </div>
         </div>
         <dl className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <Stat label="Best ELO">{profile.bestElo}</Stat>
           <Stat label="W / L / D" hint="ranked">
-            <span className="text-emerald-400">{profile.wins}</span>
-            <span className="text-zinc-600">/</span>
-            <span className="text-red-400">{profile.losses}</span>
-            <span className="text-zinc-600">/</span>
+            <span className="text-emerald-300">{profile.wins}</span>
+            <span className="text-ink-subtle">/</span>
+            <span className="text-red-300">{profile.losses}</span>
+            <span className="text-ink-subtle">/</span>
             <span className="text-zinc-300">{profile.draws}</span>
           </Stat>
           <Stat label="Win rate" hint={`${profile.gamesPlayed} ranked games`}>
@@ -271,7 +328,7 @@ export default function ProfilePage() {
           </Stat>
           <Stat label="Streak">
             {streak ? (
-              <span className={streak.type === 'W' ? 'text-emerald-400' : 'text-red-400'}>
+              <span className={streak.type === 'W' ? 'text-emerald-300' : 'text-red-300'}>
                 {streak.count}
                 {streak.type}
               </span>
@@ -282,20 +339,48 @@ export default function ProfilePage() {
           <Stat label="Best win streak">{profile.longestWinStreak}</Stat>
           <Stat label="Solved">{profile.solved.total}</Stat>
         </dl>
-      </section>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <section className="min-w-0 space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-          <h2 className="text-lg font-semibold">ELO history</h2>
-          <EloChart points={points} />
-        </section>
-        <section className="min-w-0 space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-          <h2 className="text-lg font-semibold">Problems solved</h2>
-          <SolvedBreakdown solved={profile.solved} />
-        </section>
+        <Card as="section" className="min-w-0 space-y-3" padding="p-5" aria-labelledby="elo-title">
+          <h2 id="elo-title" className="text-lg font-semibold">
+            ELO history
+          </h2>
+          {points.length < 2 ? (
+            <EmptyState
+              icon="↗"
+              title="No ranked matches yet"
+              description={
+                own
+                  ? 'Your rating history starts with your first ranked duel.'
+                  : 'The chart appears after the first ranked match.'
+              }
+              action={
+                own && (
+                  <Link to="/" className={buttonClasses({ size: 'sm' })}>
+                    Play ranked
+                  </Link>
+                )
+              }
+            />
+          ) : (
+            <EloChart points={points} />
+          )}
+        </Card>
+        <Card
+          as="section"
+          className="min-w-0 space-y-4"
+          padding="p-5"
+          aria-labelledby="solved-title"
+        >
+          <h2 id="solved-title" className="text-lg font-semibold">
+            Problems solved
+          </h2>
+          <SolvedBreakdown solved={profile.solved} own={own} />
+        </Card>
       </div>
 
-      <MatchHistory username={profile.username} />
+      <MatchHistory username={profile.username} own={own} />
     </main>
   );
 }

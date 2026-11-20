@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import Input from '@/components/ui/Input.jsx';
 
 /** Labelled input with an optional hint and a per-field error message. */
 export default function FormField({ label, error, hint, type = 'text', ...inputProps }) {
@@ -10,16 +11,11 @@ export default function FormField({ label, error, hint, type = 'text', ...inputP
       <label htmlFor={id} className="block text-sm font-medium text-zinc-300">
         {label}
       </label>
-      <input
+      <Input
         id={id}
         type={type}
-        aria-invalid={error ? true : undefined}
+        invalid={Boolean(error)}
         aria-describedby={error || hint ? messageId : undefined}
-        className={`block w-full rounded-lg border bg-zinc-950/60 px-3.5 py-2.5 text-zinc-100 transition outline-none placeholder:text-zinc-600 focus:ring-2 ${
-          error
-            ? 'border-red-500/70 focus:ring-red-500/30'
-            : 'border-zinc-700 focus:border-emerald-500 focus:ring-emerald-500/25'
-        }`}
         {...inputProps}
       />
       {error ? (
@@ -27,7 +23,7 @@ export default function FormField({ label, error, hint, type = 'text', ...inputP
           {error}
         </p>
       ) : hint ? (
-        <p id={messageId} className="text-xs text-zinc-500">
+        <p id={messageId} className="text-xs text-ink-subtle">
           {hint}
         </p>
       ) : null}
