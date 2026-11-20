@@ -30,9 +30,19 @@ export function createMemoryQueueStore() {
 }
 
 /**
+ * Same category (ALGO | FRONTEND; entries without one are ALGO) and compatible FRONTEND tracks:
+ * a player without a track preference (any track) fits any track.
+ */
+export function sameQueue(a, b) {
+  if ((a.category ?? 'ALGO') !== (b.category ?? 'ALGO')) return false;
+  return !a.track || !b.track || a.track === b.track;
+}
+
+/**
  * Pairs queued players. Oldest first; each is matched with the closest-rated compatible player.
- * Two players are compatible when their ELO difference fits the WIDER of their two windows (a
- * player who has waited long can be matched with a newcomer). Never pairs a user with themselves.
+ * Two players are compatible when they are in the same queue (sameQueue) and their ELO
+ * difference (in that category) fits the WIDER of their two windows (a player who has waited
+ * long can be matched with a newcomer). Never pairs a user with themselves.
  */
 export function findPairs(entries, now, window = DEFAULT_WINDOW) {
   const waiting = [...entries].sort((a, b) => a.joinedAt - b.joinedAt);
@@ -42,7 +52,7 @@ export function findPairs(entries, now, window = DEFAULT_WINDOW) {
     if (paired.has(a.userId)) continue;
     let best = null;
     for (const b of waiting) {
-      if (b.userId === a.userId || paired.has(b.userId)) continue;
+      if (b.userId === a.userId || paired.has(b.userId) || !sameQueue(a, b)) continue;
       const diff = Math.abs(a.elo - b.elo);
       const allowed = Math.max(
         eloWindow(now - a.joinedAt, window),
@@ -79,7 +89,7 @@ export class Matchmaker {
     this.interval = null;
   }
 
-  /** entry: { userId, username, elo } */
+  /** entry: { userId, username, elo, category?, track? } (elo is the category's rating) */
   join(entry) {
     this.store.add({ ...entry, joinedAt: Date.now() });
     this.interval ??= setInterval(() => this.tick(), this.tickMs);

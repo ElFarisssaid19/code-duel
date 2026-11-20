@@ -33,9 +33,15 @@ export default defineConfig([
     },
   },
 
-  // Node: server, root config files, client build config
+  // Node: server, renderer service, root config files, client build config
   {
-    files: ['server/**/*.js', '*.{js,mjs,cjs}', 'client/vite.config.js', 'scripts/**/*.mjs'],
+    files: [
+      'server/**/*.js',
+      'infra/renderer/src/**/*.js',
+      '*.{js,mjs,cjs}',
+      'client/vite.config.js',
+      'scripts/**/*.mjs',
+    ],
     languageOptions: { globals: globals.node },
   },
 

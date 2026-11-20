@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import Button from '@/components/ui/Button.jsx';
+import FrontendPractice from '@/components/frontend/FrontendPractice.jsx';
 import ErrorState from '@/components/ui/ErrorState.jsx';
 import Modal from '@/components/ui/Modal.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
@@ -224,5 +225,7 @@ export default function PracticePage() {
     );
   }
   if (loading) return <PracticeSkeleton />;
+  if (data.problem.category === 'FRONTEND')
+    return <FrontendPractice key={slug} problem={data.problem} />;
   return <Workspace key={slug} problem={data.problem} />;
 }

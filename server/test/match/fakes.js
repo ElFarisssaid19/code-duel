@@ -35,8 +35,46 @@ export function makeProblem(overrides = {}) {
   };
 }
 
+/** A FRONTEND problem as loadProblem() returns it (no tests; scored by the renderer). */
+export function makeFrontendProblem(overrides = {}) {
+  return {
+    id: 50,
+    slug: 'css-circle',
+    title: 'Circle',
+    difficulty: 'EASY',
+    category: 'FRONTEND',
+    track: 'CSS',
+    description: 'Draw a circle.',
+    starterCode: { html: '', css: '' },
+    canvasWidth: 400,
+    canvasHeight: 300,
+    fixedHtml: '<div class="c"></div>',
+    palette: ['#000000'],
+    matchThreshold: 99.5,
+    targetImagePath: 'targets/css-circle.png',
+    tests: [],
+    ...overrides,
+  };
+}
+
+/**
+ * Users: { id, username, elo (ALGO), frontend?: { elo, … } }. getUser/listProblemCandidates/
+ * finishMatch follow the category like the real repository.
+ */
 export function createFakeRepo({ users, problems = [makeProblem()] }) {
-  const userMap = new Map(users.map((u) => [u.id, { wins: 0, losses: 0, draws: 0, ...u }]));
+  const userMap = new Map(
+    users.map((u) => [
+      u.id,
+      {
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        ...u,
+        frontend: { elo: 1000, wins: 0, losses: 0, draws: 0, ...u.frontend },
+      },
+    ]),
+  );
+  const ratingOf = (u, category) => (category === 'FRONTEND' ? u.frontend : u);
   const matches = new Map();
   const submissions = [];
   let nextId = 100;
@@ -44,12 +82,14 @@ export function createFakeRepo({ users, problems = [makeProblem()] }) {
     users: userMap,
     matches,
     submissions,
-    getUser: async (id) => {
+    getUser: async (id, category = 'ALGO') => {
       const u = userMap.get(id);
-      return u ? { id: u.id, username: u.username, elo: u.elo } : null;
+      return u ? { id: u.id, username: u.username, elo: ratingOf(u, category).elo } : null;
     },
-    listProblemCandidates: async () =>
-      problems.map((p) => ({ id: p.id, difficulty: p.difficulty })),
+    listProblemCandidates: async ({ category = 'ALGO', track = null } = {}) =>
+      problems
+        .filter((p) => (p.category ?? 'ALGO') === category && (!track || p.track === track))
+        .map((p) => ({ id: p.id, difficulty: p.difficulty })),
     recentProblemIds: vi.fn(async () => new Set()),
     loadProblem: async (id) => problems.find((p) => p.id === id),
     createMatch: async (data) => {
@@ -63,10 +103,10 @@ export function createFakeRepo({ users, problems = [makeProblem()] }) {
     },
     finishMatch: vi.fn(async (id, data, statUpdates) => {
       Object.assign(matches.get(id), data);
-      for (const { userId, eloDelta, result } of statUpdates) {
-        const u = userMap.get(userId);
-        u.elo += eloDelta;
-        u[{ win: 'wins', loss: 'losses', draw: 'draws' }[result]] += 1;
+      for (const { userId, category, eloDelta, result } of statUpdates) {
+        const rating = ratingOf(userMap.get(userId), category);
+        rating.elo += eloDelta;
+        rating[{ win: 'wins', loss: 'losses', draw: 'draws' }[result]] += 1;
       }
     }),
     saveSubmission: async (data) => {

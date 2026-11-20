@@ -6,11 +6,20 @@
  * Match states: WAITING (players found, waiting for both clients to connect)
  *   → COUNTDOWN (3 s) → ACTIVE → FINISHED | CANCELLED
  *
+ * Categories: ALGO (judged by go-judge, progress = tests passed) and FRONTEND (HTML/CSS scored
+ * by the renderer, progress = best score %). Each match is one category; ranked matches only
+ * change the players' rating in that category.
+ *
  * SECURITY: problem.tests (with hidden inputs/expected outputs) stays in memory here. Only
- * publicProblem(), toPublicResult() and counts ever go into events or acks.
+ * publicProblem(), toPublicResult() and counts ever go into events or acks. For FRONTEND
+ * matches, an opponent only ever sees scores, never code or previews.
  */
 import { calculateEloChange } from '../elo.js';
+import { publicFrontendProblem } from '../frontend/publicProblem.js';
+import { scoreFrontendSubmission } from '../frontend/scoring.js';
+import { trackLanguage, TrackRuleError } from '../frontend/trackRules.js';
 import { JudgeUnavailableError, STATUS } from '../judge/index.js';
+import { RendererUnavailableError, RenderFailedError } from '../renderer/index.js';
 import { toPublicResult } from '../judge/publicResult.js';
 import { MatchError } from './errors.js';
 import { Matchmaker } from './matchmaker.js';
@@ -51,11 +60,22 @@ export class MatchManager {
   /**
    * @param repo    createMatchRepository() or a fake
    * @param judge   { judgeSolution, judgeSubmission } from services/judge
+   * @param scoreFrontend (problem, { html, css }) => { score, solved, threshold, charCount,
+   *                diffPng }: FRONTEND scoring (services/frontend/scoring.js; mocked in tests)
    * @param notify  (userId, event, payload) => void, delivers to all of the user's tabs
    */
-  constructor({ repo, judge, notify, config = {}, random = Math.random, matchmakerOptions = {} }) {
+  constructor({
+    repo,
+    judge,
+    notify,
+    scoreFrontend = scoreFrontendSubmission,
+    config = {},
+    random = Math.random,
+    matchmakerOptions = {},
+  }) {
     this.repo = repo;
     this.judge = judge;
+    this.scoreFrontend = scoreFrontend;
     this.notify = notify;
     this.config = { ...DEFAULT_MATCH_CONFIG, ...config };
     this.random = random;
@@ -79,7 +99,14 @@ export class MatchManager {
   getState(userId) {
     const presence = this.presence.get(userId);
     if (!presence) return { type: 'idle' };
-    if (presence.type === 'queue') return { type: 'queue', ...this.matchmaker.status(userId) };
+    if (presence.type === 'queue') {
+      return {
+        type: 'queue',
+        category: presence.category,
+        track: presence.track,
+        ...this.matchmaker.status(userId),
+      };
+    }
     if (presence.type === 'room')
       return { type: 'room', room: this.#roomView(this.rooms.get(presence.code)) };
     const match = this.matches.get(presence.matchId);
@@ -94,21 +121,28 @@ export class MatchManager {
   // ---------------------------------------------------------------------------------------------
   // Ranked queue
 
-  async joinQueue(userId) {
+  /** Ranked queue of a category (ALGO | FRONTEND); FRONTEND players can pick one track. */
+  async joinQueue(userId, { category = 'ALGO', track = null } = {}) {
     this.#assertIdle(userId);
-    this.presence.set(userId, { type: 'queue' }); // reserve before any await
+    this.presence.set(userId, { type: 'queue', category, track }); // reserve before any await
     try {
-      const user = await this.repo.getUser(userId); // fresh ELO (the session copy can be stale)
+      const [user, candidates] = await Promise.all([
+        this.repo.getUser(userId, category), // fresh ELO (the session copy can be stale)
+        this.repo.listProblemCandidates({ category, track }),
+      ]);
       if (!user) throw new MatchError('NOT_FOUND', 'User not found');
+      if (candidates.length === 0) {
+        throw new MatchError('NO_PROBLEMS', 'There are no problems in this category yet.');
+      }
       if (this.presence.get(userId)?.type !== 'queue') return { status: 'idle' }; // left meanwhile
       this.#cancelOffersFor(userId);
-      this.matchmaker.join({ userId, username: user.username, elo: user.elo });
+      this.matchmaker.join({ userId, username: user.username, elo: user.elo, category, track });
     } catch (err) {
       this.presence.delete(userId);
       throw err;
     }
     return this.presence.get(userId)?.type === 'queue'
-      ? { status: 'searching', ...this.matchmaker.status(userId) }
+      ? { status: 'searching', category, track, ...this.matchmaker.status(userId) }
       : { status: 'matched' }; // paired immediately
   }
 
@@ -121,7 +155,12 @@ export class MatchManager {
   }
 
   #onPair(a, b) {
-    this.#createMatch({ mode: 'RANKED', userIds: [a.userId, b.userId] }).catch((err) => {
+    this.#createMatch({
+      mode: 'RANKED',
+      userIds: [a.userId, b.userId],
+      category: a.category ?? 'ALGO',
+      track: a.track ?? b.track ?? null,
+    }).catch((err) => {
       this.#reportBackgroundError('ranked match creation failed', err, [a.userId, b.userId]);
     });
   }
@@ -129,14 +168,14 @@ export class MatchManager {
   // ---------------------------------------------------------------------------------------------
   // Private rooms
 
-  async createRoom(userId, { difficulty }) {
+  async createRoom(userId, { difficulty, category = 'ALGO', track = null }) {
     this.#assertIdle(userId);
     const code = this.#uniqueRoomCode();
     this.presence.set(userId, { type: 'room', code });
     try {
       const [user, candidates] = await Promise.all([
-        this.repo.getUser(userId),
-        this.repo.listProblemCandidates(),
+        this.repo.getUser(userId, category),
+        this.repo.listProblemCandidates({ category, track }),
       ]);
       if (
         !chooseProblem({ candidates, difficulties: privateDifficulties(difficulty), strict: true })
@@ -150,6 +189,8 @@ export class MatchManager {
       const room = {
         code,
         difficulty,
+        category,
+        track,
         host: { userId, username: user.username, elo: user.elo },
         createdAt: Date.now(),
         expiresAt: Date.now() + this.config.roomTtlMs,
@@ -183,7 +224,7 @@ export class MatchManager {
     for (const id of userIds) this.presence.set(id, { type: 'match', matchId: null });
 
     try {
-      const guest = await this.repo.getUser(userId);
+      const guest = await this.repo.getUser(userId, room.category);
       const view = {
         ...this.#roomView(room),
         status: 'starting',
@@ -196,6 +237,8 @@ export class MatchManager {
         userIds,
         difficultyChoice: room.difficulty,
         roomCode: room.code,
+        category: room.category,
+        track: room.track,
       });
       return { code: room.code, matchId: match.id };
     } catch (err) {
@@ -242,6 +285,8 @@ export class MatchManager {
     return {
       code: room.code,
       difficulty: room.difficulty,
+      category: room.category,
+      track: room.track,
       status: 'open',
       players: [playerSummary(room.host)],
       expiresAt: room.expiresAt,
@@ -251,7 +296,14 @@ export class MatchManager {
   // ---------------------------------------------------------------------------------------------
   // Match creation and lifecycle
 
-  async #createMatch({ mode, userIds, difficultyChoice = 'ANY', roomCode = null }) {
+  async #createMatch({
+    mode,
+    userIds,
+    difficultyChoice = 'ANY',
+    roomCode = null,
+    category = 'ALGO',
+    track = null,
+  }) {
     const [id1, id2] = userIds;
     if (id1 === id2)
       throw new MatchError('CANNOT_PLAY_YOURSELF', "You can't play against yourself.");
@@ -261,9 +313,9 @@ export class MatchManager {
     }
 
     try {
-      const users = await Promise.all(userIds.map((id) => this.repo.getUser(id)));
+      const users = await Promise.all(userIds.map((id) => this.repo.getUser(id, category)));
       const [candidates, recentIds] = await Promise.all([
-        this.repo.listProblemCandidates(),
+        this.repo.listProblemCandidates({ category, track }),
         this.repo.recentProblemIds(userIds, RECENT_MATCHES),
       ]);
       const averageElo = (users[0].elo + users[1].elo) / 2;
@@ -281,15 +333,18 @@ export class MatchManager {
 
       const problem = await this.repo.loadProblem(picked.id);
       const durationMs = this.config.durationsMs[problem.difficulty];
+      // FRONTEND: one "test" (passed = 1 once solved); progress is the best score.
+      const testCount = category === 'FRONTEND' ? 1 : problem.tests.length;
       const { id } = await this.repo.createMatch({
         mode,
+        ...(category === 'FRONTEND' && { category, track }),
         status: 'WAITING',
         roomCode,
         player1Id: id1,
         player2Id: id2,
         problemId: problem.id,
         durationMs,
-        testCount: problem.tests.length,
+        testCount,
         player1Elo: users[0].elo,
         player2Elo: users[1].elo,
       });
@@ -297,12 +352,14 @@ export class MatchManager {
       const match = {
         id,
         mode,
+        category,
+        track,
         roomCode,
         difficultyChoice,
         status: 'WAITING',
         problem,
         durationMs,
-        testCount: problem.tests.length,
+        testCount,
         players: users.map((u) => newPlayer(u)),
         createdAt: Date.now(),
         startsAt: null,
@@ -394,6 +451,8 @@ export class MatchManager {
     return {
       matchId: match.id,
       mode: match.mode,
+      category: match.category,
+      track: match.track,
       status: match.status,
       roomCode: match.roomCode,
       problem: match.startedAt ? publicProblem(match.problem) : null, // revealed at start only
@@ -415,6 +474,12 @@ export class MatchManager {
   /** Runs the sample tests only. Doesn't count as an attempt or change progress. */
   async run(userId, { language, code }) {
     const { match, player } = this.#activeMatchOf(userId);
+    if (match.category === 'FRONTEND') {
+      throw new MatchError(
+        'NOT_SUPPORTED',
+        'Frontend problems have no run step: use the live preview, then submit.',
+      );
+    }
     this.#checkCooldown(player);
     const verdict = await this.#judge(() =>
       this.judge.judgeSolution({
@@ -428,8 +493,19 @@ export class MatchManager {
   }
 
   /** Runs all tests (samples and hidden in separate executions), records progress, may end the match. */
-  async submit(userId, { language, code }) {
+  async submit(userId, body) {
     const { match, player } = this.#activeMatchOf(userId);
+    const frontendPayload = body?.kind === 'frontend';
+    if ((match.category === 'FRONTEND') !== frontendPayload) {
+      throw new MatchError(
+        'WRONG_CATEGORY',
+        match.category === 'FRONTEND'
+          ? 'This is a frontend match: send { html, css }.'
+          : 'This is an algorithm match: send { language, code }.',
+      );
+    }
+    if (frontendPayload) return this.#submitFrontend(match, player, body);
+    const { language, code } = body;
     this.#checkCooldown(player);
     player.attempts += 1;
 
@@ -488,6 +564,81 @@ export class MatchManager {
       if (verdict.status === STATUS.ACCEPTED && verdict.passed === match.testCount) {
         player.solvedAt = Date.now();
         await this.#finish(match, { winnerId: userId, reason: 'SOLVED' });
+      }
+    }
+    return payload;
+  }
+
+  /**
+   * FRONTEND submit: renders and scores the page. Progress = best score (ties: fewer characters).
+   * Reaching the problem's threshold wins the match (SOLVED).
+   */
+  async #submitFrontend(match, player, { html, css }) {
+    this.#checkCooldown(player);
+    player.attempts += 1;
+    let result;
+    try {
+      result = await this.scoreFrontend(match.problem, { html, css });
+    } catch (err) {
+      player.attempts -= 1; // rule violations and renderer failures don't count as attempts
+      throw toFrontendMatchError(err);
+    }
+
+    const { track } = match.problem;
+    const submission = await this.repo
+      .saveSubmission({
+        matchId: match.id,
+        userId: player.userId,
+        problemId: match.problem.id,
+        language: trackLanguage(track),
+        code: track === 'CSS' ? '' : html,
+        css: track === 'HTML' ? '' : css,
+        status: result.solved ? 'ACCEPTED' : 'WRONG_ANSWER',
+        passed: result.solved ? 1 : 0,
+        total: 1,
+        score: result.score,
+        charCount: result.charCount,
+      })
+      .catch((err) => {
+        console.error('[match] could not save submission:', err.message);
+        return null;
+      });
+
+    const stillActive = match.status === 'ACTIVE';
+    if (stillActive && isBetterFrontendResult(result, player)) {
+      player.bestScore = result.score;
+      player.bestChars = result.charCount;
+      player.reachedAt = Date.now();
+    }
+    if (stillActive && result.solved) player.passed = 1;
+
+    const payload = {
+      matchId: match.id,
+      result: {
+        mode: 'submit',
+        score: result.score,
+        solved: result.solved,
+        threshold: result.threshold,
+        charCount: result.charCount,
+        diffImage: result.diffPng.toString('base64'),
+      },
+      submission: submission && {
+        id: submission.id,
+        status: result.solved ? 'ACCEPTED' : 'WRONG_ANSWER',
+        score: result.score,
+        charCount: result.charCount,
+        createdAt: submission.createdAt,
+      },
+      progress: this.#progress(match, player),
+    };
+    this.notify(player.userId, 'match:submit:result', payload);
+
+    if (stillActive) {
+      const opponent = this.#opponentOf(match, player.userId);
+      this.notify(opponent.userId, 'opponent:progress', this.#progress(match, player));
+      if (result.solved) {
+        player.solvedAt = Date.now();
+        await this.#finish(match, { winnerId: player.userId, reason: 'SOLVED' });
       }
     }
     return payload;
@@ -555,7 +706,9 @@ export class MatchManager {
   #finishByTimeout(match) {
     const [a, b] = match.players;
     let winnerId = null;
-    if (a.passed !== b.passed) {
+    if (match.category === 'FRONTEND') {
+      winnerId = frontendTimeoutWinner(a, b);
+    } else if (a.passed !== b.passed) {
       winnerId = (a.passed > b.passed ? a : b).userId;
     } else if (a.passed > 0 && a.reachedAt !== b.reachedAt) {
       winnerId = (a.reachedAt < b.reachedAt ? a : b).userId; // reached that count first
@@ -579,10 +732,12 @@ export class MatchManager {
       deltas = [a, b];
     }
     const outcome = (p) => (winnerId === null ? 'draw' : p.userId === winnerId ? 'win' : 'loss');
+    const frontend = match.category === 'FRONTEND';
 
     match.result = {
       matchId: match.id,
       mode: match.mode,
+      ...(frontend && { category: match.category }),
       winnerId,
       reason,
       eloChanges:
@@ -604,6 +759,7 @@ export class MatchManager {
           total: match.testCount,
           attempts: p.attempts,
           solveTimeMs: p.solvedAt && match.startedAt ? p.solvedAt - match.startedAt : null,
+          ...(frontend && { score: p.bestScore, charCount: p.bestChars }),
         })),
       },
     };
@@ -625,10 +781,17 @@ export class MatchManager {
           player2ReachedAt: p2.reachedAt ? new Date(p2.reachedAt) : null,
           player1EloChange: deltas[0],
           player2EloChange: deltas[1],
+          ...(frontend && {
+            player1Score: p1.bestScore,
+            player2Score: p2.bestScore,
+            player1Chars: p1.bestChars,
+            player2Chars: p2.bestChars,
+          }),
         },
         match.mode === 'RANKED'
           ? match.players.map((p, i) => ({
               userId: p.userId,
+              category: match.category,
               eloDelta: deltas[i],
               result: outcome(p),
             }))
@@ -697,6 +860,8 @@ export class MatchManager {
       matchId: match.id,
       roomCode: match.roomCode,
       difficultyChoice: match.difficultyChoice,
+      category: match.category,
+      track: match.track,
       players: match.players.map((p) => p.userId),
       requestedBy: new Set(),
       status: 'open',
@@ -733,6 +898,8 @@ export class MatchManager {
       userIds: offer.players,
       difficultyChoice: offer.difficultyChoice,
       roomCode: offer.roomCode,
+      category: offer.category,
+      track: offer.track,
     });
     return { ...this.#offerView(offer, 'accepted'), newMatchId: match.id };
   }
@@ -834,8 +1001,16 @@ export class MatchManager {
     };
   }
 
+  /** ALGO: tests passed. FRONTEND: also the best score and the threshold to reach. */
   #progress(match, p) {
-    return { userId: p.userId, passed: p.passed, total: match.testCount, attempts: p.attempts };
+    const progress = {
+      userId: p.userId,
+      passed: p.passed,
+      total: match.testCount,
+      attempts: p.attempts,
+    };
+    if (match.category !== 'FRONTEND') return progress;
+    return { ...progress, score: p.bestScore, threshold: thresholdOfMatch(match) };
   }
 
   #persist(match, data) {
@@ -856,14 +1031,17 @@ export class MatchManager {
         elo: row.player1Elo,
         passed: row.player1Passed,
         eloChange: row.player1EloChange,
+        score: row.player1Score === null ? null : Number(row.player1Score),
       },
       {
         ...row.player2,
         elo: row.player2Elo,
         passed: row.player2Passed,
         eloChange: row.player2EloChange,
+        score: row.player2Score === null ? null : Number(row.player2Score),
       },
     ];
+    const frontend = row.category === 'FRONTEND';
     const view = (p) => ({
       userId: p.id,
       username: p.username,
@@ -872,12 +1050,15 @@ export class MatchManager {
       passed: p.passed,
       total: row.testCount,
       attempts: null,
+      ...(frontend && { score: p.score ?? 0 }),
     });
     const me = players.find((p) => p.id === userId);
     const opponent = players.find((p) => p.id !== userId);
     return {
       matchId: row.id,
       mode: row.mode,
+      category: row.category,
+      track: row.track,
       status: LIVE.has(row.status) ? 'CANCELLED' : row.status, // live in DB but not in memory = lost
       roomCode: row.roomCode,
       problem: null,
@@ -891,6 +1072,7 @@ export class MatchManager {
       result: {
         matchId: row.id,
         mode: row.mode,
+        ...(frontend && { category: row.category }),
         winnerId: row.winnerId,
         reason: row.endReason ?? 'CANCELLED',
         eloChanges:
@@ -912,6 +1094,7 @@ export class MatchManager {
             total: row.testCount,
             attempts: null,
             solveTimeMs: null,
+            ...(frontend && { score: p.score ?? 0, charCount: null }),
           })),
         },
       },
@@ -949,6 +1132,9 @@ function newPlayer(user) {
     connected: false,
     passed: 0,
     reachedAt: null,
+    // FRONTEND: best score so far and the character count of that submission
+    bestScore: 0,
+    bestChars: null,
     attempts: 0,
     solvedAt: null,
     lastExecAt: -Infinity,
@@ -960,8 +1146,9 @@ function newPlayer(user) {
 
 const playerSummary = (p) => ({ userId: p.userId ?? p.id, username: p.username, elo: p.elo });
 
-/** The problem as players see it: sample tests only. */
+/** The problem as players see it: sample tests only (FRONTEND: the brief, never the reference). */
 export function publicProblem(problem) {
+  if (problem.category === 'FRONTEND') return publicFrontendProblem(problem);
   return {
     id: problem.id,
     slug: problem.slug,
@@ -974,4 +1161,54 @@ export function publicProblem(problem) {
       .filter((t) => !t.hidden)
       .map((t, index) => ({ index, input: t.input, expected: t.expected })),
   };
+}
+
+const thresholdOfMatch = (match) => publicFrontendProblem(match.problem).threshold;
+
+/** Same score within 0.01 counts as a tie. */
+const SCORE_EPSILON = 0.01 + 1e-9;
+
+/** A player's new FRONTEND result is better: higher score, or same score with fewer characters. */
+function isBetterFrontendResult(result, player) {
+  if (result.score > player.bestScore) return true;
+  return (
+    result.score === player.bestScore &&
+    player.bestChars !== null &&
+    result.charCount < player.bestChars
+  );
+}
+
+/**
+ * FRONTEND timeout rules: both at 0 → draw. Otherwise the best score wins; scores within 0.01
+ * → fewer characters wins → earlier submission (of that best result) wins → draw.
+ */
+export function frontendTimeoutWinner(a, b) {
+  if (a.bestScore === 0 && b.bestScore === 0) return null;
+  if (Math.abs(a.bestScore - b.bestScore) > SCORE_EPSILON) {
+    return (a.bestScore > b.bestScore ? a : b).userId;
+  }
+  const charsA = a.bestChars ?? Infinity;
+  const charsB = b.bestChars ?? Infinity;
+  if (charsA !== charsB) return (charsA < charsB ? a : b).userId;
+  if (a.reachedAt !== null && b.reachedAt !== null && a.reachedAt !== b.reachedAt) {
+    return (a.reachedAt < b.reachedAt ? a : b).userId;
+  }
+  return null;
+}
+
+function toFrontendMatchError(err) {
+  if (err instanceof TrackRuleError) return new MatchError('TRACK_RULE_VIOLATION', err.message);
+  if (err instanceof RenderFailedError) {
+    return err.code === 'RENDER_TIMEOUT'
+      ? new MatchError('RENDER_TIMEOUT', 'Your page took more than 5 seconds to render.')
+      : new MatchError(err.code, err.message);
+  }
+  if (err instanceof RendererUnavailableError) {
+    console.error('[renderer]', err.message);
+    return new MatchError(
+      'RENDERER_UNAVAILABLE',
+      'The renderer is unavailable. Try again in a moment.',
+    );
+  }
+  return err;
 }

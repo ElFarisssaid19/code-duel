@@ -13,10 +13,17 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import Tabs from '@/components/ui/Tabs.jsx';
 import { buttonClasses } from '@/components/ui/styles.js';
 import { useApi } from '@/hooks/useApi.js';
+import {
+  CATEGORIES,
+  CATEGORY_LABELS,
+  formatScore,
+  isCategory,
+  LANGUAGE_LABELS,
+  TRACK_LABELS,
+} from '@/lib/categories.js';
 import NotFoundPage from '@/pages/NotFoundPage.jsx';
 import { useAuthStore } from '@/store/authStore.js';
 
-const LANGUAGE_LABELS = { javascript: 'JavaScript', python: 'Python' };
 const MODES = [
   { id: 'all', label: 'All' },
   { id: 'ranked', label: 'Ranked' },
@@ -35,7 +42,20 @@ function Stat({ label, children, hint }) {
   );
 }
 
-function SolvedBreakdown({ solved, own }) {
+/** ?category= from the URL (ALGO by default) and a setter that keeps the other params. */
+function useCategoryParam() {
+  const [params, setParams] = useSearchParams();
+  const category = isCategory(params.get('category')) ? params.get('category') : 'ALGO';
+  const update = (next) => {
+    const merged = { category: category === 'ALGO' ? null : category, ...next };
+    setParams(
+      Object.fromEntries(Object.entries(merged).filter(([, v]) => v !== null && v !== undefined)),
+    );
+  };
+  return [category, update, params];
+}
+
+function SolvedBreakdown({ solved, own, category }) {
   if (solved.total === 0) {
     return (
       <EmptyState
@@ -46,7 +66,10 @@ function SolvedBreakdown({ solved, own }) {
         }
         action={
           own && (
-            <Link to="/problems" className={buttonClasses({ size: 'sm', variant: 'secondary' })}>
+            <Link
+              to={category === 'FRONTEND' ? '/problems?category=FRONTEND' : '/problems'}
+              className={buttonClasses({ size: 'sm', variant: 'secondary' })}
+            >
               Browse problems
             </Link>
           )
@@ -105,6 +128,12 @@ function MatchRow({ match }) {
           <span>{match.mode === 'RANKED' ? 'Ranked' : 'Private'}</span>
           <span aria-hidden="true">·</span>
           <span>{REASON_LABELS[match.endReason] ?? match.endReason}</span>
+          {match.track && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{TRACK_LABELS[match.track]}</span>
+            </>
+          )}
           {match.languages.length > 0 && (
             <>
               <span aria-hidden="true">·</span>
@@ -115,12 +144,21 @@ function MatchRow({ match }) {
       </div>
       <div className="flex items-center gap-4 text-right text-sm">
         <div className="hidden sm:block">
-          <p className="font-mono text-zinc-300">
-            {match.passed}/{match.total}
-          </p>
-          <p className="text-xs text-ink-subtle">
-            {match.solveTimeMs !== null ? `solved ${formatClock(match.solveTimeMs)}` : 'tests'}
-          </p>
+          {match.category === 'FRONTEND' ? (
+            <>
+              <p className="font-mono text-zinc-300">{formatScore(match.score)}</p>
+              <p className="text-xs text-ink-subtle">best score</p>
+            </>
+          ) : (
+            <>
+              <p className="font-mono text-zinc-300">
+                {match.passed}/{match.total}
+              </p>
+              <p className="text-xs text-ink-subtle">
+                {match.solveTimeMs !== null ? `solved ${formatClock(match.solveTimeMs)}` : 'tests'}
+              </p>
+            </>
+          )}
         </div>
         <div className="w-12">
           <EloDelta delta={match.eloChange} />
@@ -162,13 +200,13 @@ function HistorySkeleton() {
 }
 
 function MatchHistory({ username, own }) {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [category, update, searchParams] = useCategoryParam();
   const mode = MODES.some((m) => m.id === searchParams.get('mode'))
     ? searchParams.get('mode')
     : 'all';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
   const { data, error, loading, retry } = useApi(
-    `/users/${username}/matches?mode=${mode}&page=${page}`,
+    `/users/${username}/matches?mode=${mode}&page=${page}&category=${category}`,
   );
 
   return (
@@ -182,7 +220,7 @@ function MatchHistory({ username, own }) {
           label="Match mode"
           tabs={MODES}
           value={mode}
-          onChange={(id) => setSearchParams(id === 'all' ? {} : { mode: id })}
+          onChange={(id) => update({ mode: id === 'all' ? null : id, page: null })}
         />
       </div>
       {loading && <HistorySkeleton />}
@@ -191,7 +229,11 @@ function MatchHistory({ username, own }) {
         <Card>
           <EmptyState
             icon="⚔"
-            title={mode === 'all' ? 'No matches yet' : `No ${mode} matches yet`}
+            title={
+              mode === 'all'
+                ? `No ${CATEGORY_LABELS[category].toLowerCase()} matches yet`
+                : `No ${mode} ${CATEGORY_LABELS[category].toLowerCase()} matches yet`
+            }
             description={
               own
                 ? 'Finished duels show up here, with links to their details.'
@@ -217,7 +259,7 @@ function MatchHistory({ username, own }) {
           <Pagination
             page={data.page}
             totalPages={data.totalPages}
-            onChange={(p) => setSearchParams({ ...(mode !== 'all' && { mode }), page: String(p) })}
+            onChange={(p) => update({ mode: mode === 'all' ? null : mode, page: String(p) })}
           />
         </>
       )}
@@ -256,8 +298,9 @@ function ProfileSkeleton() {
 export default function ProfilePage() {
   const { username } = useParams();
   const me = useAuthStore((s) => s.user);
-  const profileRes = useApi(`/users/${username}/profile`);
-  const historyRes = useApi(`/users/${username}/elo-history`);
+  const [category, update] = useCategoryParam();
+  const profileRes = useApi(`/users/${username}/profile?category=${category}`);
+  const historyRes = useApi(`/users/${username}/elo-history?category=${category}`);
 
   if (profileRes.error?.status === 404)
     return (
@@ -284,6 +327,12 @@ export default function ProfilePage() {
   const streak = profile.currentStreak;
   return (
     <main className="mx-auto w-full max-w-5xl space-y-8 px-4 py-8 sm:py-12">
+      <Tabs
+        label="Profile category"
+        tabs={CATEGORIES}
+        value={category}
+        onChange={(id) => update({ category: id === 'ALGO' ? null : id, mode: null, page: null })}
+      />
       <Card as="section" className="motion-safe:animate-fade-up" aria-label="Player stats">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -298,14 +347,14 @@ export default function ProfilePage() {
               {profile.favoriteLanguage && (
                 <>
                   {' '}
-                  · Favorite language:{' '}
+                  · Favorite {category === 'FRONTEND' ? 'track' : 'language'}:{' '}
                   {LANGUAGE_LABELS[profile.favoriteLanguage] ?? profile.favoriteLanguage}
                 </>
               )}
             </p>
           </div>
           <div className="text-right">
-            <p className="eyebrow">ELO</p>
+            <p className="eyebrow">{CATEGORY_LABELS[category]} ELO</p>
             <p className="font-mono text-3xl font-bold text-accent" data-testid="profile-elo">
               {profile.elo}
             </p>
@@ -357,7 +406,10 @@ export default function ProfilePage() {
               }
               action={
                 own && (
-                  <Link to="/" className={buttonClasses({ size: 'sm' })}>
+                  <Link
+                    to={category === 'FRONTEND' ? '/?category=FRONTEND' : '/'}
+                    className={buttonClasses({ size: 'sm' })}
+                  >
                     Play ranked
                   </Link>
                 )
@@ -376,7 +428,7 @@ export default function ProfilePage() {
           <h2 id="solved-title" className="text-lg font-semibold">
             Problems solved
           </h2>
-          <SolvedBreakdown solved={profile.solved} own={own} />
+          <SolvedBreakdown solved={profile.solved} own={own} category={category} />
         </Card>
       </div>
 

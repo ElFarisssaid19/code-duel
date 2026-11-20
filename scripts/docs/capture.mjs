@@ -1,6 +1,6 @@
 /**
  * Captures the README media with headless Chrome against the running dev stack:
- *   docs/screenshots/{landing,arena,result,leaderboard,profile,practice,arena-mobile}.png
+ *   docs/screenshots/{landing,arena,result,leaderboard,profile,practice,arena-mobile,frontend-practice}.png
  *   docs/demo.gif (a duel from "match found" to the result)
  *
  * It registers two fresh demo accounts and plays three real ranked duels (so the profile has an
@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import frontendProblems from '../../server/prisma/seed/frontend/index.js';
 import { launchBrowser, sleep } from './browser.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -198,6 +199,27 @@ try {
   );
   await sleep(300);
   await shot(a, 'practice');
+
+  // 4. Frontend practice: a partial solution (no green light) with the official diff.
+  const traffic = frontendProblems.find((p) => p.slug === 'css-traffic-light');
+  await a.goto('/practice/css-traffic-light');
+  await a.waitFor(
+    `!!window.__codeDuelEditor && !!document.querySelector('[data-testid=live-preview]')`,
+    'frontend practice',
+    30_000,
+  );
+  await typeCode(a, traffic.reference.css.replace(/\.green \{[^}]*\}\n/, ''), { delayMs: 10 });
+  await sleep(3100); // practice rate limit (1 request / 3 s)
+  await a.click('Submit');
+  await a.waitFor(
+    `!!document.querySelector('[data-testid=frontend-score]')`,
+    'frontend score',
+    30_000,
+  );
+  await a.click('Diff');
+  await a.waitFor(`!!document.querySelector('[data-testid=diff-image]')`, 'diff image');
+  await sleep(300);
+  await shot(a, 'frontend-practice');
 
   const errors = [...a.errors, ...b.errors];
   if (errors.length) console.warn('Browser errors:\n', errors.join('\n'));

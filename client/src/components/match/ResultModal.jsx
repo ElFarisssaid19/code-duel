@@ -3,6 +3,7 @@ import UserLink from '@/components/UserLink.jsx';
 import { formatClock, outcomeOf } from '@/components/match/format.js';
 import Button from '@/components/ui/Button.jsx';
 import Modal from '@/components/ui/Modal.jsx';
+import { formatScore } from '@/lib/categories.js';
 
 const HEADLINES = {
   win: {
@@ -37,6 +38,19 @@ const HEADLINES = {
 
 function reasonText(result, meId, opponentName) {
   const won = result.winnerId === meId;
+  if (result.category === 'FRONTEND') {
+    if (result.reason === 'SOLVED') {
+      return won
+        ? 'You reached the score threshold first.'
+        : `${opponentName} reached the score threshold first.`;
+    }
+    if (result.reason === 'TIMEOUT') {
+      if (result.winnerId === null) return 'Time ran out with the same score.';
+      return won
+        ? 'Time ran out and your best score was higher (or tied, with fewer characters).'
+        : `Time ran out and ${opponentName} was ahead.`;
+    }
+  }
   switch (result.reason) {
     case 'SOLVED':
       return won ? 'You passed every test first.' : `${opponentName} passed every test first.`;
@@ -95,6 +109,7 @@ export default function ResultModal({
   const { title, tone, color, icon, animation } = HEADLINES[outcome];
   const elo = result.eloChanges?.[meId];
   const canRematch = result.mode === 'PRIVATE' && result.reason !== 'CANCELLED';
+  const frontend = result.category === 'FRONTEND';
 
   return (
     <Modal
@@ -143,13 +158,13 @@ export default function ResultModal({
                 Player
               </th>
               <th scope="col" className="pb-2 font-medium">
-                Tests
+                {frontend ? 'Best score' : 'Tests'}
               </th>
               <th scope="col" className="pb-2 font-medium">
                 Attempts
               </th>
               <th scope="col" className="pb-2 text-right font-medium">
-                Solve time
+                {frontend ? 'Characters' : 'Solve time'}
               </th>
             </tr>
           </thead>
@@ -165,11 +180,15 @@ export default function ResultModal({
                   )}
                 </td>
                 <td className="py-2 font-mono">
-                  {p.passed}/{p.total}
+                  {frontend ? formatScore(p.score) : `${p.passed}/${p.total}`}
                 </td>
                 <td className="py-2 font-mono">{p.attempts ?? '—'}</td>
                 <td className="py-2 text-right font-mono">
-                  {p.solveTimeMs !== null ? formatClock(p.solveTimeMs) : '—'}
+                  {frontend
+                    ? (p.charCount ?? '—')
+                    : p.solveTimeMs !== null
+                      ? formatClock(p.solveTimeMs)
+                      : '—'}
                 </td>
               </tr>
             ))}

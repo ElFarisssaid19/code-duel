@@ -9,6 +9,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { app } from '../../src/app.js';
 import { prisma } from '../../src/lib/prisma.js';
 import { initSocket } from '../../src/socket/index.js';
+import { ratingOf } from '../fixtures.js';
+import { createFrontendProblem, FRONTEND } from '../frontendFixtures.js';
 import {
   createProblem,
   getTokenCookie,
@@ -171,9 +173,7 @@ describe('ranked duel (real server, sockets, DB and go-judge)', () => {
       },
     });
 
-    const [alice, bob] = await Promise.all(
-      [a.id, b.id].map((id) => prisma.user.findUnique({ where: { id } })),
-    );
+    const [alice, bob] = await Promise.all([a.id, b.id].map((id) => ratingOf(id)));
     expect(alice).toMatchObject({ elo: 1016, wins: 1, losses: 0 });
     expect(bob).toMatchObject({ elo: 984, wins: 0, losses: 1 });
     const match = await prisma.match.findUnique({
@@ -257,7 +257,7 @@ describe('private room (real server)', () => {
       reason: 'SOLVED',
       eloChanges: null,
     });
-    const players = await prisma.user.findMany({ where: { id: { in: [a.id, b.id] } } });
+    const players = await Promise.all([a.id, b.id].map((id) => ratingOf(id)));
     expect(players.map((u) => [u.elo, u.wins, u.losses])).toEqual([
       [1000, 0, 0],
       [1000, 0, 0],
@@ -274,6 +274,70 @@ describe('private room (real server)', () => {
     expect(await b.waitFor('match:end', (p) => p.matchId === next.matchId)).toMatchObject({
       winnerId: b.id,
       reason: 'FORFEIT',
+    });
+  });
+});
+
+describe('FRONTEND ranked duel (real server, sockets, DB and renderer)', () => {
+  it('scores live, the first to reach the threshold wins, only FRONTEND ratings change', async () => {
+    await createFrontendProblem(prisma, 'css-traffic-light');
+    const a = await client('alice_duel');
+    const b = await client('bob_duel');
+    expect(await a.ok('queue:join', { category: 'FRONTEND', track: 'CSS' })).toMatchObject({
+      status: 'searching',
+      category: 'FRONTEND',
+      track: 'CSS',
+    });
+    await b.ok('queue:join', { category: 'FRONTEND' }); // any track
+    const { matchId } = await a.waitFor('match:found');
+    const start = await playMatch(a, b, matchId);
+    expect(start.problem).toMatchObject({
+      category: 'FRONTEND',
+      track: 'CSS',
+      slug: 'css-traffic-light',
+      targetImageUrl: '/api/problems/css-traffic-light/target.png',
+    });
+
+    const partial = await b.ok('match:submit', {
+      css: '/* BOB_SECRET_CSS */ body { margin: 0; height: 300px; background: #cbd5e1; }', // background only
+    });
+    expect(partial.result.solved).toBe(false);
+    expect(partial.result.score).toBeGreaterThan(0);
+    const progress = await a.waitFor('opponent:progress');
+    expect(progress).toEqual({
+      userId: b.id,
+      passed: 0,
+      total: 1,
+      attempts: 1,
+      score: partial.result.score,
+      threshold: 99.5,
+    });
+    expect(JSON.stringify(a.events)).not.toContain('BOB_SECRET_CSS'); // never the opponent's code
+
+    const win = await a.ok('match:submit', { css: FRONTEND['css-traffic-light'].reference.css });
+    expect(win.result).toMatchObject({ score: 100, solved: true });
+    const end = await b.waitFor('match:end');
+    expect(end).toMatchObject({ winnerId: a.id, reason: 'SOLVED', category: 'FRONTEND' });
+
+    expect(await ratingOf(a.id, 'FRONTEND')).toMatchObject({ elo: 1016, wins: 1, bestElo: 1016 });
+    expect(await ratingOf(b.id, 'FRONTEND')).toMatchObject({ elo: 984, losses: 1, bestElo: 1000 });
+    for (const id of [a.id, b.id]) {
+      expect(await ratingOf(id, 'ALGO')).toMatchObject({ elo: 1000, wins: 0, losses: 0 });
+    }
+    const row = await prisma.match.findUnique({ where: { id: matchId } });
+    expect(row).toMatchObject({ category: 'FRONTEND', track: 'CSS', testCount: 1 });
+    expect(Number(row.player1Score) + Number(row.player2Score)).toBe(100 + partial.result.score);
+  });
+
+  it('validates the category options', async () => {
+    const a = await client('alice_duel');
+    expect((await a.emit('queue:join', { category: 'ALGO', track: 'CSS' })).error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: 'A track can only be chosen for FRONTEND',
+    });
+    expect((await a.emit('queue:join', { category: 'WEB' })).error.code).toBe('VALIDATION_ERROR');
+    expect((await a.emit('queue:join', { category: 'FRONTEND' })).error).toMatchObject({
+      code: 'NO_PROBLEMS',
     });
   });
 });

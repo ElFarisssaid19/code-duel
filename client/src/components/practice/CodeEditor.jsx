@@ -5,9 +5,19 @@ import { monaco } from '@/lib/monaco.js';
 
 /**
  * Monaco editor. Ctrl/Cmd+Enter → onRun, Ctrl/Cmd+Shift+Enter → onSubmit. The handlers are
- * read through refs so the editor commands always call the latest ones.
+ * read through refs so the editor commands always call the latest ones. `language`: javascript,
+ * python, html or css. `readOnly` shows code that can't be edited (e.g. the CSS track's HTML).
  */
-export default function CodeEditor({ path, language, value, onChange, onRun, onSubmit }) {
+export default function CodeEditor({
+  path,
+  language,
+  value,
+  onChange,
+  onRun = () => {},
+  onSubmit,
+  readOnly = false,
+  label = 'Code editor',
+}) {
   const handlers = useRef({ onRun, onSubmit });
   useEffect(() => {
     handlers.current = { onRun, onSubmit };
@@ -40,6 +50,9 @@ export default function CodeEditor({ path, language, value, onChange, onRun, onS
         scrollBeyondLastLine: false,
         automaticLayout: true,
         tabSize: language === 'python' ? 4 : 2,
+        readOnly,
+        domReadOnly: readOnly,
+        ariaLabel: readOnly ? `${label} (read-only)` : label,
         padding: { top: 12, bottom: 12 },
         renderLineHighlight: 'all',
         smoothScrolling: true,

@@ -1,10 +1,15 @@
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import DifficultyBadge from '@/components/DifficultyBadge.jsx';
+import TrackBadge from '@/components/frontend/TrackBadge.jsx';
 import Card from '@/components/ui/Card.jsx';
 import EmptyState from '@/components/ui/EmptyState.jsx';
 import ErrorState from '@/components/ui/ErrorState.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
+import Tabs from '@/components/ui/Tabs.jsx';
 import { useApi } from '@/hooks/useApi.js';
+import { CATEGORIES, formatScore, isCategory, TRACKS } from '@/lib/categories.js';
+
+const TRACK_FILTERS = [{ id: 'ALL', label: 'All tracks' }, ...TRACKS];
 
 function SolvedMark({ solved }) {
   return solved ? (
@@ -47,9 +52,16 @@ function ProblemsSkeleton() {
 }
 
 export default function ProblemsPage() {
-  const { data, error, loading, retry } = useApi('/problems');
+  const [params, setParams] = useSearchParams();
+  const category = isCategory(params.get('category')) ? params.get('category') : 'ALGO';
+  const track = TRACKS.some((t) => t.id === params.get('track')) ? params.get('track') : 'ALL';
+  const frontend = category === 'FRONTEND';
+  const query = new URLSearchParams({ category, ...(frontend && track !== 'ALL' && { track }) });
+  const { data, error, loading, retry } = useApi(`/problems?${query}`);
   const problems = data?.problems;
   const solvedCount = problems?.filter((p) => p.solved).length ?? 0;
+
+  const select = (next) => setParams(next, { replace: true });
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8 sm:py-12">
@@ -57,7 +69,11 @@ export default function ProblemsPage() {
         <div className="space-y-1">
           <p className="eyebrow">Practice</p>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Problems</h1>
-          <p className="text-sm text-ink-muted">Solve them solo, in JavaScript or Python.</p>
+          <p className="text-sm text-ink-muted">
+            {frontend
+              ? 'Reproduce a target design with HTML and CSS, scored pixel by pixel.'
+              : 'Solve them solo, in JavaScript or Python.'}
+          </p>
         </div>
         {problems && (
           <p className="text-sm text-ink-muted">
@@ -65,6 +81,24 @@ export default function ProblemsPage() {
           </p>
         )}
       </header>
+
+      <div className="space-y-3">
+        <Tabs
+          label="Category"
+          tabs={CATEGORIES}
+          value={category}
+          onChange={(id) => select(id === 'ALGO' ? {} : { category: id })}
+        />
+        {frontend && (
+          <Tabs
+            variant="chips"
+            label="Track"
+            tabs={TRACK_FILTERS}
+            value={track}
+            onChange={(id) => select(id === 'ALL' ? { category } : { category, track: id })}
+          />
+        )}
+      </div>
 
       {loading && <ProblemsSkeleton />}
       {error && <ErrorState message={error.message} onRetry={retry} />}
@@ -88,6 +122,15 @@ export default function ProblemsPage() {
                 <span className="min-w-0 flex-1 truncate font-medium text-ink">
                   {problem.title}
                 </span>
+                {problem.bestScore !== undefined && problem.bestScore !== null && (
+                  <span
+                    className="hidden font-mono text-xs text-ink-muted sm:inline"
+                    title="Your best score"
+                  >
+                    best {formatScore(problem.bestScore)}
+                  </span>
+                )}
+                {problem.track && <TrackBadge track={problem.track} />}
                 <DifficultyBadge difficulty={problem.difficulty} />
               </Link>
             </li>

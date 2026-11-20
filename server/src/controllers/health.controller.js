@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { judgeHealth } from '../services/judge/index.js';
+import { rendererHealth } from '../services/renderer/index.js';
 
 const DB_TIMEOUT_MS = 3000;
 
@@ -18,8 +19,18 @@ async function checkDatabase() {
   }
 }
 
-/** GET /api/health: API status, a real query against MySQL, and the code runner. */
+/** GET /api/health: API status, a real query against MySQL, the code runner and the renderer. */
 export async function getHealth(req, res) {
-  const [db, judgeOk] = await Promise.all([checkDatabase(), judgeHealth()]);
-  res.json({ status: 'ok', db, judge: judgeOk ? 'ok' : 'error', uptime: process.uptime() });
+  const [db, judgeOk, rendererOk] = await Promise.all([
+    checkDatabase(),
+    judgeHealth(),
+    rendererHealth(),
+  ]);
+  res.json({
+    status: 'ok',
+    db,
+    judge: judgeOk ? 'ok' : 'error',
+    renderer: rendererOk ? 'ok' : 'error',
+    uptime: process.uptime(),
+  });
 }

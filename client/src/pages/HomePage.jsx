@@ -1,12 +1,15 @@
 import { useEffect, useId, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import FormError from '@/components/FormError.jsx';
 import { formatClock } from '@/components/match/format.js';
 import Button from '@/components/ui/Button.jsx';
 import Card from '@/components/ui/Card.jsx';
 import Input from '@/components/ui/Input.jsx';
 import Select from '@/components/ui/Select.jsx';
+import Tabs from '@/components/ui/Tabs.jsx';
+import { CATEGORIES, CATEGORY_LABELS, isCategory, TRACK_LABELS, TRACKS } from '@/lib/categories.js';
 import { request } from '@/lib/socket.js';
+import { loadItem, saveItem } from '@/lib/storage.js';
 import { useAuthStore } from '@/store/authStore.js';
 import { useConnectionStore } from '@/store/connectionStore.js';
 import { usePlayStore } from '@/store/playStore.js';
@@ -17,6 +20,55 @@ const ROOM_DIFFICULTIES = [
   { value: 'MEDIUM', label: 'Medium' },
   { value: 'HARD', label: 'Hard' },
 ];
+
+const TRACK_OPTIONS = [
+  { value: '', label: 'Any track' },
+  ...TRACKS.map((t) => ({ value: t.id, label: t.label })),
+];
+const CHOICE_KEY = 'code-duel:play-choice';
+
+/** "Frontend · CSS", "Algorithms"… */
+const choiceLabel = ({ category, track }) =>
+  category === 'FRONTEND' && track
+    ? `${CATEGORY_LABELS.FRONTEND} · ${TRACK_LABELS[track]}`
+    : CATEGORY_LABELS[category ?? 'ALGO'];
+
+/** What to play: ALGO or FRONTEND (+ an optional track). Used by the ranked queue and new rooms. */
+function CategoryPanel({ choice, onChange, disabled }) {
+  const trackId = useId();
+  return (
+    <Panel title="Category">
+      <Tabs
+        variant="pill"
+        label="Category"
+        tabs={CATEGORIES}
+        value={choice.category}
+        onChange={(category) => !disabled && onChange({ category, track: null })}
+      />
+      <p className="text-sm text-ink-muted">
+        {choice.category === 'FRONTEND'
+          ? 'Reproduce a target design with HTML/CSS. The first to reach the score threshold wins.'
+          : 'Solve an algorithm problem in JavaScript or Python. The first to pass every test wins.'}
+      </p>
+      {choice.category === 'FRONTEND' && (
+        <div className="flex items-center gap-3">
+          <label htmlFor={trackId} className="text-sm text-ink-muted">
+            Track
+          </label>
+          <Select
+            id={trackId}
+            data-testid="track-select"
+            value={choice.track ?? ''}
+            onChange={(e) => onChange({ ...choice, track: e.target.value || null })}
+            options={TRACK_OPTIONS}
+            disabled={disabled}
+            className="min-w-0 flex-1"
+          />
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function Stat({ label, value, className = 'text-ink' }) {
   return (
@@ -36,7 +88,7 @@ function Panel({ title, children, glow }) {
   );
 }
 
-function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
+function RankedPanel({ queue, busy, disabled, onPlay, onCancel, choice }) {
   if (queue) {
     return (
       <Panel title="Ranked" glow="accent">
@@ -49,6 +101,7 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
               </span>
               Searching for an opponent…
             </p>
+            <p className="mt-1 text-xs text-ink-subtle">{choiceLabel(queue)}</p>
             <p className="mt-1 font-mono text-sm text-ink-muted" aria-live="polite">
               {formatClock(queue.elapsedMs ?? 0)} ·{' '}
               {queue.window ? `±${queue.window} ELO` : 'any ELO'}
@@ -64,7 +117,8 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel }) {
   return (
     <Panel title="Ranked">
       <p className="text-sm text-ink-muted">
-        Get matched with a player of similar ELO. Wins and losses change your rating.
+        Get matched with a player of similar {CATEGORY_LABELS[choice.category]} ELO. Wins and losses
+        change your rating in that category only.
       </p>
       <Button
         onClick={onPlay}
@@ -101,6 +155,9 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
         <div className="space-y-3 text-center">
           <p className="text-sm text-ink-muted">
             Share this code or the invite link. Unranked: no ELO change.
+          </p>
+          <p className="text-xs text-ink-subtle" data-testid="room-category">
+            {choiceLabel(room)}
           </p>
           <p
             className="font-mono text-4xl font-bold tracking-[0.3em] text-sky-300"
@@ -194,12 +251,31 @@ function JoinPanel({ busy, disabled, onJoin }) {
   );
 }
 
+function initialChoice(fromUrl) {
+  if (isCategory(fromUrl)) return { category: fromUrl, track: null };
+  const saved = loadItem(CHOICE_KEY);
+  if (saved && isCategory(saved.category)) {
+    return { category: saved.category, track: TRACK_LABELS[saved.track] ? saved.track : null };
+  }
+  return { category: 'ALGO', track: null };
+}
+
 export default function HomePage() {
   const user = useAuthStore((s) => s.user);
   const { queue, room, notice, setQueue, setRoom, setNotice } = usePlayStore();
   const socketStatus = useConnectionStore((s) => s.socketStatus);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
+  const [searchParams] = useSearchParams();
+  const [choice, setChoice] = useState(() => initialChoice(searchParams.get('category')));
+  const rating = user.ratings?.[choice.category] ?? user;
+  const options =
+    choice.category === 'FRONTEND' ? { category: 'FRONTEND', track: choice.track } : {};
+
+  function changeChoice(next) {
+    setChoice(next);
+    saveItem(CHOICE_KEY, next); // per-browser convenience
+  }
 
   // ELO / W-L-D change after every ranked match: refresh them when coming back home.
   useEffect(() => {
@@ -231,16 +307,16 @@ export default function HomePage() {
             <h1 className="truncate text-2xl font-bold tracking-tight">{user.username}</h1>
           </div>
           <div className="text-right">
-            <p className="eyebrow">ELO</p>
+            <p className="eyebrow">{CATEGORY_LABELS[choice.category]} ELO</p>
             <p className="font-mono text-3xl font-bold text-accent" data-testid="elo">
-              {user.elo}
+              {rating.elo}
             </p>
           </div>
         </div>
         <dl className="mt-6 grid grid-cols-3 gap-3">
-          <Stat label="Wins" value={user.wins} className="text-emerald-300" />
-          <Stat label="Losses" value={user.losses} className="text-red-300" />
-          <Stat label="Draws" value={user.draws} className="text-zinc-300" />
+          <Stat label="Wins" value={rating.wins} className="text-emerald-300" />
+          <Stat label="Losses" value={rating.losses} className="text-red-300" />
+          <Stat label="Draws" value={rating.draws} className="text-zinc-300" />
         </dl>
       </Card>
 
@@ -251,11 +327,14 @@ export default function HomePage() {
         </p>
       )}
 
+      {idle && <CategoryPanel choice={choice} onChange={changeChoice} disabled={Boolean(busy)} />}
+
       <RankedPanel
         queue={queue}
+        choice={choice}
         busy={busy === 'queue'}
         disabled={!idle || offline}
-        onPlay={() => act('queue', async () => setQueue(await request('queue:join')))}
+        onPlay={() => act('queue', async () => setQueue(await request('queue:join', options)))}
         onCancel={() => act('queue', async () => (await request('queue:leave'), setQueue(null)))}
       />
       {!queue && (
@@ -265,7 +344,9 @@ export default function HomePage() {
             busy={busy === 'room'}
             disabled={!idle || offline}
             onCreate={(difficulty) =>
-              act('room', async () => setRoom(await request('room:create', { difficulty })))
+              act('room', async () =>
+                setRoom(await request('room:create', { difficulty, ...options })),
+              )
             }
             onClose={() => act('room', async () => (await request('room:leave'), setRoom(null)))}
           />

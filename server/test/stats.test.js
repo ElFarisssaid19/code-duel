@@ -62,8 +62,8 @@ describe('GET /api/leaderboard', () => {
 
   it('paginates (ranks stay global) and returns my rank when I am not on the page', async () => {
     await seedPlayers();
-    await prisma.user.update({
-      where: { username: validUser.username },
+    await prisma.userRating.updateMany({
+      where: { user: { username: validUser.username }, category: 'ALGO' },
       data: { elo: 900, losses: 1 },
     });
 

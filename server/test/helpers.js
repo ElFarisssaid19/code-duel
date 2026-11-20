@@ -14,6 +14,7 @@ export const PUBLIC_USER_KEYS = [
   'id',
   'losses',
   'preferredLanguage',
+  'ratings',
   'username',
   'wins',
 ].sort();

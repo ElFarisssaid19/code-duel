@@ -6,7 +6,9 @@ import EmptyState from '@/components/ui/EmptyState.jsx';
 import ErrorState from '@/components/ui/ErrorState.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import { buttonClasses } from '@/components/ui/styles.js';
+import Tabs from '@/components/ui/Tabs.jsx';
 import { useApi } from '@/hooks/useApi.js';
+import { CATEGORIES, CATEGORY_LABELS, isCategory } from '@/lib/categories.js';
 
 const LIMIT = 20;
 const MEDALS = {
@@ -76,8 +78,20 @@ function LeaderboardSkeleton() {
 export default function LeaderboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
-  const { data, error, loading, retry } = useApi(`/leaderboard?page=${page}&limit=${LIMIT}`);
+  const category = isCategory(searchParams.get('category')) ? searchParams.get('category') : 'ALGO';
+  const { data, error, loading, retry } = useApi(
+    `/leaderboard?page=${page}&limit=${LIMIT}&category=${category}`,
+  );
   const me = data?.me;
+  const playLink = category === 'FRONTEND' ? '/?category=FRONTEND' : '/';
+  const go = (next) =>
+    setSearchParams(
+      Object.fromEntries(
+        Object.entries({ category: category === 'ALGO' ? null : category, ...next }).filter(
+          ([, v]) => v !== null && v !== undefined,
+        ),
+      ),
+    );
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8 sm:py-12">
@@ -86,7 +100,7 @@ export default function LeaderboardPage() {
           <p className="eyebrow">Season ladder</p>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Leaderboard</h1>
           <p className="text-sm text-ink-muted">
-            Ranked players by ELO. Private matches don&apos;t count.
+            Ranked players by ELO, one ladder per category. Private matches don&apos;t count.
           </p>
         </div>
         {me && (
@@ -96,13 +110,20 @@ export default function LeaderboardPage() {
         )}
       </header>
 
+      <Tabs
+        label="Leaderboard category"
+        tabs={CATEGORIES}
+        value={category}
+        onChange={(id) => go({ category: id === 'ALGO' ? null : id, page: null })}
+      />
+
       {data && !me && data.entries.length > 0 && (
         <Card padding="p-4" className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-ink-muted">
-            <span className="font-medium text-ink">No rank yet.</span> Play one ranked match to join
-            the leaderboard.
+            <span className="font-medium text-ink">No rank yet.</span> Play one ranked{' '}
+            {CATEGORY_LABELS[category].toLowerCase()} match to join this leaderboard.
           </p>
-          <Link to="/" className={buttonClasses({ size: 'sm' })}>
+          <Link to={playLink} className={buttonClasses({ size: 'sm' })}>
             Play ranked
           </Link>
         </Card>
@@ -116,9 +137,9 @@ export default function LeaderboardPage() {
           <EmptyState
             icon="#1"
             title="The ladder is empty"
-            description="Nobody has finished a ranked match yet. Play one and take the first spot."
+            description={`Nobody has finished a ranked ${CATEGORY_LABELS[category].toLowerCase()} match yet. Play one and take the first spot.`}
             action={
-              <Link to="/" className={buttonClasses()}>
+              <Link to={playLink} className={buttonClasses()}>
                 Play ranked
               </Link>
             }
@@ -130,7 +151,9 @@ export default function LeaderboardPage() {
         <>
           <Card padding="p-0" className="overflow-hidden">
             <table className="w-full text-left">
-              <caption className="sr-only">Leaderboard, page {data.page}</caption>
+              <caption className="sr-only">
+                {CATEGORY_LABELS[category]} leaderboard, page {data.page}
+              </caption>
               <thead className="border-b border-line text-xs tracking-wide text-ink-subtle uppercase">
                 <tr>
                   <th scope="col" className="px-3 py-3 font-medium sm:px-4">
@@ -164,7 +187,7 @@ export default function LeaderboardPage() {
           <Pagination
             page={data.page}
             totalPages={data.totalPages}
-            onChange={(p) => setSearchParams({ page: String(p) })}
+            onChange={(p) => go({ page: String(p) })}
           />
         </>
       )}

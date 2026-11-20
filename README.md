@@ -4,10 +4,16 @@
 
 **Same problem. Same clock. One winner.**
 
-Real-time 1v1 coding battles in the browser. Two developers get the same algorithm problem, write
-JavaScript or Python against a server-owned clock, and the first to pass every hidden test wins
-the match and the ELO. Code runs in an isolated go-judge sandbox, and both players see each
-other's progress live over WebSockets.
+Real-time 1v1 coding battles in the browser, in two categories:
+
+- **Algorithms:** two developers get the same problem and write JavaScript or Python against a
+  server-owned clock. The first to pass every hidden test wins the match and the ELO. Code runs
+  in an isolated go-judge sandbox.
+- **Frontend:** both players reproduce the same target design with HTML and/or CSS. A
+  sandboxed Chromium renders each submission and scores it pixel by pixel. The first to reach
+  the threshold wins.
+
+Both players see each other's progress live over WebSockets.
 
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
@@ -18,7 +24,8 @@ other's progress live over WebSockets.
 ![Prisma 7](https://img.shields.io/badge/Prisma-7-2D3748?logo=prisma&logoColor=white)
 ![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1?logo=mysql&logoColor=white)
 ![go-judge](https://img.shields.io/badge/sandbox-go--judge-00ADD8?logo=go&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-219_passing-34EAA2)
+![Chromium renderer](<https://img.shields.io/badge/renderer-Chromium_(Playwright)-2EAD33?logo=googlechrome&logoColor=white>)
+![Tests](https://img.shields.io/badge/tests-268_passing-34EAA2)
 
 ![A ranked duel, from "match found" to the result](docs/demo.gif)
 
@@ -34,6 +41,11 @@ other's progress live over WebSockets.
 | **Profile with ELO history**                            | **Practice mode**                                |
 | ![Profile with ELO chart](docs/screenshots/profile.png) | ![Practice mode](docs/screenshots/practice.png)  |
 
+**Frontend practice:** the target with its palette, the HTML/CSS editor, and your live preview with
+the official diff (red = pixels that differ) after a submit.
+
+![Frontend practice: target, CSS editor, score and diff](docs/screenshots/frontend-practice.png)
+
 <p align="center">
   <img src="docs/screenshots/arena-mobile.png" alt="The arena on a 375 px phone: Problem / Editor / Results tabs" width="280"><br>
   <em>The arena at 375 px: Problem / Editor / Results tabs.</em>
@@ -46,9 +58,19 @@ other's progress live over WebSockets.
 - **Private rooms:** a 6-character code or invite link, unranked, with a rematch flow.
 - **Live arena:** the server-owned timer, both players' test progress, an "opponent is typing"
   indicator, and Run (samples) / Submit (everything) in JavaScript or Python with Monaco.
-- **16 problems** (5 easy, 7 medium, 4 hard), each with 2 samples and 8+ hidden tests. Hard
-  problems include large inputs that time out O(n²) solutions.
-- **Practice mode:** the same judge, with no opponent.
+- **16 algorithm problems** (5 easy, 7 medium, 4 hard), each with 2 samples and 8+ hidden tests.
+  Hard problems include large inputs that time out O(n²) solutions.
+- **18 frontend problems** in 3 tracks:
+  - **HTML:** structure only, no CSS.
+  - **CSS:** the HTML is given, write the CSS.
+  - **HTML + CSS:** build the whole component.
+
+  Each problem shows the target, its palette (click to copy) and the canvas size. The editor has
+  a sandboxed live preview with compare tools: a slider, a 50 % overlay and the official diff.
+
+- **Separate ratings per category:** ALGO and FRONTEND each have their own ELO, W/L/D,
+  leaderboard, profile stats and ELO chart.
+- **Practice mode:** the same judge and renderer, with no opponent.
 - **Leaderboard, profiles and match details:** ranks with ties, a hand-drawn SVG ELO chart,
   streaks, solved-by-difficulty, a submission timeline, and both final codes (after the match).
 - **Game feel:** a "match found" animation, a 3-2-1 countdown, a sound and toast when the
@@ -74,10 +96,12 @@ flowchart LR
     WS["Socket.io 4<br/>queue, rooms, live match"]
     MM["MatchManager<br/>server-owned timers,<br/>matchmaker, ELO"]
     JG["Judge service<br/>harness + verdicts"]
+    RS["Renderer client<br/>track rules + scoring"]
   end
 
   DB[("MySQL 8.4<br/>Prisma 7")]
   SB["go-judge sandbox<br/>(Docker, cgroup v2)<br/>Node.js + Python"]
+  RD["Renderer service<br/>(Docker, Node 24 +<br/>Chromium headless shell)<br/>JS off, network blocked"]
 
   UI -- "HTTPS + httpOnly cookie" --> API
   UI <-- "WebSocket (same cookie)" --> WS
@@ -86,6 +110,9 @@ flowchart LR
   API --> JG
   MM --> JG
   JG -- "REST: run code" --> SB
+  API --> RS
+  MM --> RS
+  RS -- "REST: render + compare" --> RD
   API --> DB
   MM -- "one transaction per result" --> DB
 ```
@@ -115,14 +142,25 @@ flowchart LR
 - **ELO in one transaction:** the match row and both players' ELO and W/L/D are updated
   atomically, so the result is never half-written. Ranked only: private rooms can't be used to
   farm rating.
+- **Rendering untrusted HTML/CSS:** the renderer service renders each submission in a fresh
+  Chromium page:
+  - JavaScript is disabled, and `<script>`, `<iframe>`, `<object>`, `<embed>`, `<link>`,
+    `<meta http-equiv>` and `on*` handlers are stripped first by the browser's own parser;
+  - every network request is aborted, with a strict CSP and a black-hole proxy as backups;
+  - 5 s per render, at most 2 pages at a time, 20 KB of code, a read-only container with no
+    capabilities.
+
+  Targets are generated by rendering each reference solution with the same renderer, so the
+  reference always scores exactly 100.00.
+
 - **Session revocation with stateless JWTs:** each token carries `tokenVersion`. A password change
   or "log out of all devices" increments it, rejects old tokens over HTTP, and disconnects that
   user's older sockets right away.
 
 ## Tests
 
-**219 tests in 17 files, all passing.** They run against a real MySQL test database and the real
-go-judge container:
+**268 tests in 23 files, all passing.** They run against a real MySQL test database and
+the real go-judge and renderer containers:
 
 - Unit tests: the judge, harnesses, ELO, the matchmaker and the match state machine (with fake
   timers).
@@ -130,6 +168,9 @@ go-judge container:
 - Socket integration tests: full duels between two real clients, including reconnects and
   revocation.
 - Seed checks: every reference solution passes, and naive solutions time out on hard problems.
+- Renderer integration: references score 100.00, a `<script>` can't paint the page, external
+  URLs never load, a too-slow page fails cleanly. Track rules, FRONTEND duel rules, and the
+  rating migration on a scratch database.
 
 Details in [Tests](#tests-1).
 
@@ -140,9 +181,9 @@ You need Node.js 24, Docker with Compose v2, and a Linux host with cgroup v2:
 ```bash
 npm install
 cp infra/.env.example infra/.env && cp server/.env.example server/.env   # then set real secrets
-npm run infra:up      # MySQL + go-judge
+npm run infra:up      # MySQL + go-judge + renderer
 npm run db:migrate    # schema
-npm run db:seed       # 16 problems, each reference solution checked through go-judge
+npm run db:seed       # 16 algorithm problems (checked through go-judge) + 18 frontend targets
 npm run dev           # http://localhost:5173
 ```
 
@@ -167,6 +208,7 @@ The full walkthrough is in [Setup](#setup).
 | Server  | Node.js 24, Express 5, Socket.io 4, Prisma 7 (MariaDB driver adapter), Zod 4                            |
 | Data    | MySQL 8.4 (Docker)                                                                                      |
 | Judge   | go-judge 1.14 (Docker, cgroup v2) with Node.js 26 LTS and Python 3.13 runtimes                          |
+| Render  | Renderer service (Docker): Node.js 24 slim, Playwright 1.65 Chromium headless shell, pixelmatch, pngjs  |
 | Auth    | bcryptjs, JWT (jose) in an httpOnly cookie, express-rate-limit                                          |
 | Testing | Vitest, supertest, socket.io-client                                                                     |
 | Tooling | npm workspaces, ESLint 10 (flat config), Prettier 3, concurrently                                       |
@@ -176,7 +218,8 @@ The full walkthrough is in [Setup](#setup).
 - **Node.js 24** (`.nvmrc` pins it: run `nvm use`) and npm 11
 - **Docker Engine** with the **Compose v2 plugin** (`docker compose`, not `docker-compose`)
 - Your user can run `docker` without sudo
-- Free ports: 5173, 4000, 3306, 5050
+- Free ports: 5173, 4000, 3306, 5050, 5070
+- About 2.5 GB of disk for the Docker images (MySQL ~1.1 GB, renderer 820 MB, go-judge 400 MB)
 - Linux host with cgroup v2 (the default on current distros); see [go-judge setup](#go-judge-setup)
 
 ## Setup
@@ -191,13 +234,14 @@ cp server/.env.example server/.env        # DATABASE_URL must match infra/.env
 cp client/.env.example client/.env.local  # optional, everything has a default
 cp server/.env.test.example server/.env.test  # only needed for `npm test`
 
-# 3. Build/start MySQL + go-judge and wait until both are healthy
+# 3. Build/start MySQL, go-judge and the renderer, and wait until all three are healthy
 npm run infra:up
 
 # 4. Apply migrations (and regenerate the Prisma client)
 npm run db:migrate
 
-# 5. Seed the practice problems (checks every reference solution through go-judge first)
+# 5. Seed the problems: algorithm reference solutions are checked through go-judge, frontend
+#    targets are rendered (server/data/targets/) and verified with the renderer
 npm run db:seed
 
 # 6. Start the client and the server
@@ -208,8 +252,8 @@ Open <http://localhost:5173>. Logged out, `/` is the **landing page** (live publ
 duel). Register and the same URL becomes the **home page**, where you can **Play ranked**, create
 or join a **private room**, or practice. The navbar links to Practice, the Leaderboard, your
 profile and Settings. See [Pages](#pages). The dev dashboard at
-<http://localhost:5173/dev/status> shows the API, database, judge, session and socket state (the
-socket only connects while you're logged in).
+<http://localhost:5173/dev/status> shows the API, database, judge, renderer, session and socket
+state (the socket only connects while you're logged in).
 
 Generate secrets with `openssl rand -hex 24` (DB passwords) and `openssl rand -hex 64`
 (`JWT_SECRET`). Use hex or other URL-safe characters for the MySQL password, because it is also
@@ -227,14 +271,14 @@ Run all of these from the repo root.
 | `npm run lint:fix`     | ESLint with auto-fix                                                 |
 | `npm run format`       | Prettier: format every file                                          |
 | `npm run format:check` | Prettier: check only (good for CI)                                   |
-| `npm run infra:up`     | Builds (if needed) and starts MySQL + go-judge, waits until healthy  |
-| `npm run infra:down`   | Stops both (MySQL data stays in the `code-duel-mysql-data` volume)   |
-| `npm run infra:logs`   | Follows the logs of both containers                                  |
+| `npm run infra:up`     | Builds (if needed) and starts MySQL, go-judge and the renderer       |
+| `npm run infra:down`   | Stops them (MySQL data stays in the `code-duel-mysql-data` volume)   |
+| `npm run infra:logs`   | Follows the logs of all containers                                   |
 | `npm run db:up`        | Alias of `infra:up`                                                  |
 | `npm run db:down`      | Alias of `infra:down`                                                |
 | `npm run db:logs`      | Follows MySQL logs only                                              |
 | `npm run db:migrate`   | `prisma migrate dev`, then `prisma generate`                         |
-| `npm run db:seed`      | Verifies and upserts the practice problems (idempotent)              |
+| `npm run db:seed`      | Verifies and upserts all problems, renders targets (idempotent)      |
 | `npm run db:generate`  | Regenerates the Prisma client into `server/src/generated/prisma`     |
 | `npm run db:studio`    | Opens Prisma Studio (prints its URL)                                 |
 | `npm run docs:icons`   | Regenerates the favicon set and `og-image.png` (needs `npm run dev`) |
@@ -257,6 +301,7 @@ production).
 | Server (Express/WS) | 4000 | http://localhost:4000/api/health |
 | MySQL               | 3306 | localhost only                   |
 | go-judge API        | 5050 | http://localhost:5050/version    |
+| Renderer API        | 5070 | http://localhost:5070/health     |
 
 In development the Vite server proxies `/api` and `/socket.io` (WebSocket included) to port 4000,
 so the browser talks to one origin and doesn't need CORS.
@@ -264,23 +309,28 @@ so the browser talks to one origin and doesn't need CORS.
 ## Environment variables
 
 **`infra/.env`**: `MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`,
-`MYSQL_PORT`, `JUDGE_PORT` (go-judge, default 5050).
+`MYSQL_PORT`, `JUDGE_PORT` (go-judge, default 5050), `RENDERER_PORT` (renderer, default 5070;
+not 5060/5061: `fetch()` refuses those ports).
 
 **`server/.env`**: validated with Zod at startup (`server/src/config/env.js`). If a value is
 missing or invalid, the server exits with a clear error.
 
-| Variable         | Example                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------- |
-| `PORT`           | `4000`                                                                              |
-| `NODE_ENV`       | `development` / `test` / `production`                                               |
-| `CLIENT_URL`     | `http://localhost:5173` (CORS origin)                                               |
-| `DATABASE_URL`   | `mysql://codeduel:<password>@localhost:3306/code_duel?allowPublicKeyRetrieval=true` |
-| `JWT_SECRET`     | 32+ random characters                                                               |
-| `JUDGE_URL`      | `http://localhost:5050` (go-judge REST API)                                         |
-| `JUDGE_PROVIDER` | `gojudge` (default; see [Judge architecture](#judge-architecture))                  |
+| Variable            | Example                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `PORT`              | `4000`                                                                              |
+| `NODE_ENV`          | `development` / `test` / `production`                                               |
+| `CLIENT_URL`        | `http://localhost:5173` (CORS origin)                                               |
+| `DATABASE_URL`      | `mysql://codeduel:<password>@localhost:3306/code_duel?allowPublicKeyRetrieval=true` |
+| `JWT_SECRET`        | 32+ random characters                                                               |
+| `JUDGE_URL`         | `http://localhost:5050` (go-judge REST API)                                         |
+| `JUDGE_PROVIDER`    | `gojudge` (default; see [Judge architecture](#judge-architecture))                  |
+| `RENDERER_URL`      | `http://localhost:5070` (default; the renderer service)                             |
+| `RENDERER_PROVIDER` | `playwright` (default; see [Renderer](#renderer-service))                           |
+| `DATA_DIR`          | `data` (default, relative to `server/`): where the seed writes target images        |
 
 **`server/.env.test`**: same variables, used only by `npm test`. `DATABASE_URL` must point to a
-database whose name ends in `_test` (default `code_duel_test`).
+database whose name ends in `_test` (default `code_duel_test`). Tests write target images to a temp
+directory, never to `server/data`.
 
 **`client/.env.local`**: `VITE_API_URL` and `VITE_SOCKET_URL`. Leave both empty in development.
 
@@ -289,8 +339,10 @@ database whose name ends in `_test` (default `code_duel_test`).
 ### Endpoints
 
 All under `/api/auth`. Bodies are JSON. Every user object contains only public fields:
-`id`, `username`, `email`, `elo`, `wins`, `losses`, `draws`, `preferredLanguage`, `createdAt`.
-`passwordHash` and `tokenVersion` are never returned.
+`id`, `username`, `email`, `preferredLanguage`, `createdAt`, and the ratings:
+`ratings: { ALGO: { elo, wins, losses, draws, bestElo }, FRONTEND: { … } }`. The top-level `elo`,
+`wins`, `losses` and `draws` are the ALGO rating, kept for compatibility. `passwordHash` and
+`tokenVersion` are never returned.
 
 | Method | Path        | Body                            | Success                            | Errors        |
 | ------ | ----------- | ------------------------------- | ---------------------------------- | ------------- |
@@ -415,6 +467,27 @@ The server test suite (Vitest + supertest + socket.io-client): **219 tests in 17
   connections against the real server, MySQL and go-judge. Covers a full ranked match with ELO in
   the DB, a private room with rematch, rejoin after a disconnect, the disconnect loss, and a scan
   of every event and ack payload proving hidden test data never appears.
+- **Frontend tests** (`test/frontend/`, `test/match/frontendDuel.test.js`,
+  `test/ratingMigration.test.js`):
+  - **Renderer integration** (real container): references score 100.00 deterministically; an
+    empty page scores 0 (raw ratio > 95 % on sparse pages); a `<script>`, a `</style>` break-out
+    and event handlers can't change the page; external `url()`, `@import`, `<iframe>` and `<img>`
+    never load; a page that takes too long fails with `RENDER_TIMEOUT` after 5 s, and the
+    renderer still works afterwards; code over 20 KB is refused.
+  - **Track rules** for all three tracks: CSS / `<style>` / `style=` / `<link>` in HTML, HTML in
+    CSS, embedded images, empty code, character counting.
+  - **Duel rules** with the renderer mocked:
+    - matchmaking per category and track, with the FRONTEND rating;
+    - threshold win, best score on timeout (a worse resubmission doesn't count);
+    - the character tiebreak, then the earlier submission; draw at 0;
+    - only FRONTEND ratings change; opponents never see code or diffs.
+  - **API:** category filters, the brief (no reference), target images, practice submit (partial
+    → below the threshold with a diff, reference → solved), track errors, category-aware
+    leaderboard / profile / history, match previews (hidden while live) and code.
+  - A real-socket ranked FRONTEND duel.
+  - The canvas document of the live preview matches the renderer's.
+  - **Rating migration** on a scratch database: users keep their ELO / W/L/D / best ELO in ALGO,
+    FRONTEND starts at 1000.
 - **Settings and public stats tests** (`test/settings.test.js`): `GET /api/stats/public` needs
   no auth and is cached for 60 s. Password change: requires the current password, validates the
   new one like register, keeps this session with a fresh cookie, rejects the old token afterwards
@@ -520,7 +593,11 @@ POST /api/practice/:slug/run|submit
 
 ## Duels
 
-Two players get the same problem; the server judges both with the same judge as practice.
+Two players get the same problem; the server judges both with the same judge as practice. Every
+match is one category: **ALGO** (tests passed, judged by go-judge) or **FRONTEND** (pixel score,
+rendered by the renderer; see [Frontend category](#frontend-category)). The rules below apply to
+both, except where the frontend section says otherwise. Ranked matches only change the rating of
+their category.
 
 ### Match rules
 
@@ -543,7 +620,11 @@ Two players get the same problem; the server judges both with the same judge as 
 
 - Each queued player has an ELO window that starts at **±100** and widens by **50 every 5 s**, up to
   **±500**. After **60 s** they can be paired with anyone.
-- Two players are compatible when their ELO difference fits the **wider** of their two windows.
+- One queue per category: an ALGO player is never paired with a FRONTEND player. A FRONTEND player
+  can pick a track (HTML, CSS, HTML + CSS) or "any track"; two players are compatible when the
+  tracks match or one of them chose any track (the match then uses the chosen track).
+- Two players are compatible when their ELO **in that category** differs by no more than the
+  **wider** of their two windows.
 - Oldest players are served first, each paired with the closest-rated compatible player.
 - Leaving the queue, disconnecting or closing the last tab removes the player. Waiting players
   get `queue:status { elapsedMs, window }` every second.
@@ -571,38 +652,41 @@ All request/response events use acknowledgement callbacks and answer
 `{ ok: true, data }` or `{ ok: false, error: { code, message } }`. Every payload is validated with zod
 (`server/src/validators/match.schemas.js`).
 
-| Client → server              | Payload                                                 | Ack data                                                                                           |
-| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `state:get`                  | none                                                    | `{ type: 'idle' \| 'queue' \| 'room' \| 'match', … }`: restores the UI / redirects to a live match |
-| `queue:join` / `queue:leave` | none                                                    | `{ status, elapsedMs?, window? }`                                                                  |
-| `room:create`                | `{ difficulty: 'EASY' \| 'MEDIUM' \| 'HARD' \| 'ANY' }` | room `{ code, difficulty, status, players, expiresAt }`                                            |
-| `room:join`                  | `{ code }`                                              | `{ code, matchId }`                                                                                |
-| `room:leave`                 | none                                                    | `{ status: 'idle' }`                                                                               |
-| `match:rejoin`               | `{ matchId }`                                           | full snapshot (also emitted as `match:state`)                                                      |
-| `match:run`                  | `{ language, code }`                                    | `{ matchId, result }`: samples only                                                                |
-| `match:submit`               | `{ language, code }`                                    | `{ matchId, result, submission, progress }`: same `result` shape as practice submit                |
-| `match:forfeit`              | none                                                    | `{ matchId }`                                                                                      |
-| `match:activity`             | none (fire and forget, throttled)                       | none                                                                                               |
-| `rematch:request`            | `{ matchId? }`                                          | `{ matchId, status, requestedBy, newMatchId? }`                                                    |
+| Client → server   | Payload                                                                    | Ack data                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `state:get`       | none                                                                       | `{ type: 'idle' \| 'queue' \| 'room' \| 'match', … }`: restores the UI / redirects to a live match                   |
+| `queue:join`      | none (ALGO) or `{ category: 'ALGO' \| 'FRONTEND', track? }`                | `{ status, category, track, elapsedMs?, window? }`                                                                   |
+| `queue:leave`     | none                                                                       | `{ status: 'idle' }`                                                                                                 |
+| `room:create`     | `{ difficulty: 'EASY' \| 'MEDIUM' \| 'HARD' \| 'ANY', category?, track? }` | room `{ code, difficulty, category, track, status, players, expiresAt }`                                             |
+| `room:join`       | `{ code }`                                                                 | `{ code, matchId }`                                                                                                  |
+| `room:leave`      | none                                                                       | `{ status: 'idle' }`                                                                                                 |
+| `match:rejoin`    | `{ matchId }`                                                              | full snapshot (also emitted as `match:state`)                                                                        |
+| `match:run`       | `{ language, code }` (ALGO only)                                           | `{ matchId, result }`: samples only                                                                                  |
+| `match:submit`    | ALGO `{ language, code }`, FRONTEND `{ html?, css? }`                      | `{ matchId, result, submission, progress }`. FRONTEND `result`: `{ score, solved, threshold, charCount, diffImage }` |
+| `match:forfeit`   | none                                                                       | `{ matchId }`                                                                                                        |
+| `match:activity`  | none (fire and forget, throttled)                                          | none                                                                                                                 |
+| `rematch:request` | `{ matchId? }`                                                             | `{ matchId, status, requestedBy, newMatchId? }`                                                                      |
 
-| Server → client                            | Payload                                                                                                    |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `queue:status`                             | `{ status: 'searching', elapsedMs, window }` (`window: null` = anyone) or `{ status: 'idle' }`             |
-| `room:update`                              | `{ code, difficulty, status: 'open' \| 'starting' \| 'closed', players, expiresAt, reason? }`              |
-| `match:found`                              | `{ matchId, mode }`                                                                                        |
-| `match:countdown`                          | `{ matchId, startsAt, serverNow }`                                                                         |
-| `match:start`                              | `{ matchId, problem (samples only), endsAt, serverNow, me, opponent: { username, elo, … } }`               |
-| `match:state`                              | snapshot on rejoin: status, problem, `endsAt`, `remainingMs`, `me`, `opponent`, result, rematch            |
-| `match:run:result` / `match:submit:result` | same payload as the ack (sent to all of the player's tabs)                                                 |
-| `opponent:progress`                        | `{ userId, passed, total, attempts }`                                                                      |
-| `opponent:activity`                        | `{ at }`: "opponent is typing"                                                                             |
-| `opponent:connection`                      | `{ connected, graceEndsAt? }`                                                                              |
-| `match:end`                                | `{ matchId, mode, winnerId, reason, eloChanges: { [userId]: { before, after, delta } } \| null, summary }` |
-| `rematch:update`                           | `{ matchId, status: 'pending' \| 'accepted' \| 'expired' \| 'cancelled', requestedBy }`                    |
-| `match:error`                              | `{ code, message }`: a match couldn't be created after pairing                                             |
+| Server → client                            | Payload                                                                                                                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue:status`                             | `{ status: 'searching', elapsedMs, window }` (`window: null` = anyone) or `{ status: 'idle' }`                                                                                   |
+| `room:update`                              | `{ code, difficulty, status: 'open' \| 'starting' \| 'closed', players, expiresAt, reason? }`                                                                                    |
+| `match:found`                              | `{ matchId, mode }`                                                                                                                                                              |
+| `match:countdown`                          | `{ matchId, startsAt, serverNow }`                                                                                                                                               |
+| `match:start`                              | `{ matchId, problem (samples only), endsAt, serverNow, me, opponent: { username, elo, … } }`                                                                                     |
+| `match:state`                              | snapshot on rejoin: status, problem, `endsAt`, `remainingMs`, `me`, `opponent`, result, rematch                                                                                  |
+| `match:run:result` / `match:submit:result` | same payload as the ack (sent to all of the player's tabs)                                                                                                                       |
+| `opponent:progress`                        | `{ userId, passed, total, attempts }` (FRONTEND adds `score`, `threshold`: never code or previews)                                                                               |
+| `opponent:activity`                        | `{ at }`: "opponent is typing"                                                                                                                                                   |
+| `opponent:connection`                      | `{ connected, graceEndsAt? }`                                                                                                                                                    |
+| `match:end`                                | `{ matchId, mode, winnerId, reason, eloChanges: { [userId]: { before, after, delta } } \| null, summary }` (FRONTEND adds `category`; summary players have `score`, `charCount`) |
+| `rematch:update`                           | `{ matchId, status: 'pending' \| 'accepted' \| 'expired' \| 'cancelled', requestedBy }`                                                                                          |
+| `match:error`                              | `{ code, message }`: a match couldn't be created after pairing                                                                                                                   |
 
 Hidden test inputs, expected outputs, logs and errors never appear in any event or ack (the
-integration test scans all of them).
+integration test scans all of them). The snapshot (`match:state`) also carries `category` and
+`track`; for FRONTEND matches, `problem` is the frontend brief (target image URL, canvas, palette,
+fixed HTML, track rules), never the reference solution.
 
 ### Testing a duel locally with two accounts
 
@@ -621,26 +705,27 @@ integration test scans all of them).
 
 ### Pages
 
-| Route                          | What it shows                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `/` (logged out)               | Landing page: hero with an animated mock duel, features, "how it works", live public stats, footer                        |
-| `/` (logged in)                | Play: ranked queue, private rooms, join by code, your ELO and W/L/D                                                       |
-| `/problems`, `/practice/:slug` | Problem list and the practice editor                                                                                      |
-| `/leaderboard`                 | Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row when you're on another page |
-| `/u/:username`                 | Public profile: stats, ELO history chart (hover for date + ELO), solved by difficulty, match history with a mode filter   |
-| `/matches/:id`                 | Match details: summary, side-by-side submission timeline, and both final codes (participants only, after the match)       |
-| `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px it uses Problem / Editor / Results tabs.                            |
-| `/join/:code`                  | Invite link to a private room                                                                                             |
-| `/settings`                    | Change password, log out of all devices, default editor language                                                          |
-| anything else                  | 404 page (also for unknown players and matches)                                                                           |
+| Route                          | What it shows                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (logged out)               | Landing page: hero with an animated mock duel, features, "how it works", live public stats, footer                                                          |
+| `/` (logged in)                | Play: pick ALGO or FRONTEND (+ optional track), ranked queue, private rooms, join by code, your ELO and W/L/D for the category                              |
+| `/problems`, `/practice/:slug` | Problem list with ALGO / FRONTEND tabs (`?category=`, track filter, track badges, best score) and the practice editor (frontend: Target / Editor / Preview) |
+| `/leaderboard`                 | ALGO / FRONTEND tabs (`?category=`). Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row                          |
+| `/u/:username`                 | Public profile with ALGO / FRONTEND tabs: stats, ELO history chart, solved by difficulty, match history with a mode filter                                  |
+| `/matches/:id`                 | Match details: summary, timeline, both final codes (participants only, after the match). FRONTEND: final previews (rendered) of both players                |
+| `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px: Problem / Editor / Results tabs (FRONTEND: Target / Editor / Preview)                                |
+| `/join/:code`                  | Invite link to a private room                                                                                                                               |
+| `/settings`                    | Change password, log out of all devices, default editor language                                                                                            |
+| anything else                  | 404 page (also for unknown players and matches)                                                                                                             |
 
 Every logged-in page except the arena has the navbar (Play, Practice, Leaderboard, My profile,
-Settings, the sound toggle, your ELO, Log out; a menu button below 1024 px). Usernames link to profiles everywhere. All pages
+Settings, the sound toggle, your ALGO · FRONTEND ELO, Log out; a menu button below 1024 px). Usernames link to profiles everywhere. All pages
 work down to 375 px with no horizontal scrolling.
 
 ### Endpoints
 
-All require the session cookie.
+All require the session cookie. Every endpoint below takes `?category=ALGO|FRONTEND` (default
+ALGO; for match history, no category means both) and returns the same shape for both categories.
 
 | Method | Path                                                                  | Returns                                                                                                                                                                                                                                                                                 |
 | ------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -649,7 +734,8 @@ All require the session cookie.
 | GET    | `/api/users/:username/elo-history`                                    | `{ username, points: [{ matchId, date, elo, delta }] }`: starts at 1000 (account creation), then one point per finished ranked match                                                                                                                                                    |
 | GET    | `/api/users/:username/matches?page=&limit=&mode=all\|ranked\|private` | `{ page, limit, total, totalPages, matches: [{ id, mode, result, endReason, opponent: { username, elo }, problem: { title, slug, difficulty }, languages, passed, total, solveTimeMs, eloChange, date }] }`, finished matches, newest first                                             |
 | GET    | `/api/matches/:id`                                                    | `{ match: { mode, status, endReason, winnerId, problem, durationMs, players: [{ username, eloBefore, eloChange, eloAfter, passed, result, solveTimeMs }], timeline: [{ userId, offsetMs, language, status, passed, total }], code: { available, reason } } }`. **Never contains code.** |
-| GET    | `/api/matches/:id/code`                                               | `{ players: [{ userId, submission: { language, code, status, passed, total, createdAt } \| null }] }`: each player's **last** submission                                                                                                                                                |
+| GET    | `/api/matches/:id/code`                                               | `{ players: [{ userId, submission: { language, code, status, passed, total, createdAt } \| null }] }`: each player's **last** submission (FRONTEND: the **best** one, with `css`, `score`, `charCount`)                                                                                 |
+| GET    | `/api/matches/:id/preview/:userId.png`                                | FRONTEND: the player's best submission rendered by the renderer (PNG, cached). Any logged-in user, **only once the match is FINISHED** (403 `MATCH_NOT_FINISHED` before).                                                                                                               |
 
 Definitions:
 
@@ -660,7 +746,12 @@ Definitions:
   (`RANK()`: 1, 1, 3).
 - **Streaks:** the current streak is the run of identical W or L results ending with the latest
   match (a draw ends it); the longest win streak is the longest run of wins.
-- **Favorite language:** the language with the most submissions (practice and matches).
+- **Favorite language:** the language with the most submissions (practice and matches) on problems
+  of that category (for FRONTEND, the "language" is the track: `html`, `css`, `html_css`).
+- **FRONTEND extras:** match-history entries of FRONTEND matches also have `category`, `track` and
+  `score` (the user's best score). Match details of a FRONTEND match add `category`, `track`,
+  `canvas`, each player's `score` and `charCount`, the score of every timeline entry, and
+  `previews: { available, reason, players: [{ userId, url }] }`.
 - **Solved:** distinct problems with at least one accepted submission (practice or match), by
   difficulty.
 
@@ -792,20 +883,258 @@ It is cached in memory for 60 s (`services/stats.service.js`, 3 queries per refr
 
 All endpoints require the session cookie.
 
-| Method | Path                         | Body                 | Returns                                                                     |
-| ------ | ---------------------------- | -------------------- | --------------------------------------------------------------------------- |
-| GET    | `/api/problems`              | none                 | `{ problems: [{ id, slug, title, difficulty, solved }] }`                   |
-| GET    | `/api/problems/:slug`        | none                 | `{ problem: { …, description (markdown), starterCode, samples } }`          |
-| POST   | `/api/practice/:slug/run`    | `{ language, code }` | `{ result }`: sample tests only, full details                               |
-| POST   | `/api/practice/:slug/submit` | `{ language, code }` | `{ result, submission }`: all tests; saves a `Submission` (`matchId: null`) |
+| Method | Path                             | Body                                                  | Returns                                                                                                                                                                     |
+| ------ | -------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/problems?category=&track=` | none                                                  | `{ problems: [{ id, slug, title, difficulty, solved }] }`. `category`: `ALGO` (default) or `FRONTEND`; FRONTEND items add `track` and `bestScore`, and `track` filters them |
+| GET    | `/api/problems/:slug`            | none                                                  | ALGO: `{ problem: { …, description (markdown), starterCode, samples } }`. FRONTEND: see [Frontend API](#frontend-api)                                                       |
+| GET    | `/api/problems/:slug/target.png` | none                                                  | FRONTEND target image (PNG)                                                                                                                                                 |
+| POST   | `/api/practice/:slug/run`        | `{ language, code }`                                  | `{ result }`: sample tests only, full details (ALGO only)                                                                                                                   |
+| POST   | `/api/practice/:slug/submit`     | ALGO `{ language, code }`, FRONTEND `{ html?, css? }` | ALGO: `{ result, submission }`: all tests; saves a `Submission` (`matchId: null`). FRONTEND: `{ score, solved, threshold, charCount, diffImage, submission }`               |
 
-- `language`: `javascript` or `python`. `code`: 1 byte to 20 KB.
+- `language`: `javascript` or `python`. `code`: 1 byte to 20 KB. A payload of the wrong category
+  (e.g. `{ html }` for an ALGO problem) is a `400 WRONG_CATEGORY`.
 - `result`: `{ mode, status, passed, total, timeMs, memoryKb, compileError, tests }`. Sample tests
   include `input`, `expected`, `actual`, `error`, `logs`, `timeMs`. **Hidden tests only include
   `{ index, status, timeMs }`**: no input, expected or actual output, logs or errors (those could
   echo the hidden input). Hidden tests are never sent by `GET /api/problems/:slug` either.
 - Run and submit share a rate limit of **1 request per 3 seconds per user** (`429 RATE_LIMITED`).
 - `503 JUDGE_UNAVAILABLE` / `503 JUDGE_ERROR` if go-judge is down or fails (nothing is saved).
+
+## Frontend category
+
+Players reproduce a target image with HTML and/or CSS. The renderer service renders the
+submission with Chromium, and the server scores it against the target pixel by pixel.
+
+### Tracks
+
+| Track      | Players write | Rules (enforced server-side, `400 TRACK_RULE_VIOLATION`)                                                                                                                                                                      | Canvas  | Solved at |
+| ---------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------- |
+| `HTML`     | HTML only     | No CSS at all: no `css` field, no `<style>`, no `style="…"`, no `<link>`. Browser default styles. Focus: structure (headings, lists, tables, forms, nav). Presentational HTML attributes such as `<table border>` are allowed | 600×400 | 98.00     |
+| `CSS`      | CSS only      | The HTML is fixed and read-only (`problem.fixedHtml`); sending HTML is refused                                                                                                                                                | 400×300 | 99.50     |
+| `HTML_CSS` | HTML and CSS  | Free (a UI component: buttons, card, navbar, form…)                                                                                                                                                                           | 600×400 | 98.00     |
+
+For every track:
+
+- Embedded raster images (`data:image/png…`) and base64 data URIs are refused. The target image is
+  public, so pasting it would be a free 100 %. URL-encoded SVG is fine.
+- CSS can't contain `</style>`.
+- An empty submission is refused.
+- HTML + CSS are limited to 20 KB together.
+
+The 18 seeded problems (`server/prisma/seed/frontend/`):
+
+| Track          | Easy                                                     | Medium                                            | Hard                                  |
+| -------------- | -------------------------------------------------------- | ------------------------------------------------- | ------------------------------------- |
+| CSS (8)        | centered circle, overlapping squares, horizontal stripes | traffic light, 4×4 checkerboard, concentric rings | nested triangles, geometric landscape |
+| HTML (4)       | recipe page                                              | data table, contact form                          | nested navigation                     |
+| HTML + CSS (6) | button set, notification toast                           | profile card, navbar                              | pricing card, login form              |
+
+CSS-track designs have no text, so their scores don't depend on fonts.
+
+### Scoring
+
+The renderer renders the submission at the exact canvas size, then compares it with the target
+using [pixelmatch](https://github.com/mapbox/pixelmatch). The threshold is 0.1, and anti-aliased
+pixels are detected and not counted (`includeAA: false`).
+
+```
+blankDifferentPixels = pixels where an empty (white) page differs from the target
+score    = 100 × (1 − differentPixels / blankDifferentPixels), clamped to 0–100, 2 decimals
+rawScore = 100 × (1 − differentPixels / totalPixels)            (also returned, for reference)
+```
+
+The score is normalized by how different an **empty page** is from the target. With the raw ratio,
+sparse targets give an empty page 95–99 %: black text on white covers ~2 % of an HTML canvas, and
+light backgrounds are within pixelmatch's color threshold of white. That is above the "solved"
+thresholds. Normalized, an empty page always scores 0.00 and the reference 100.00. On full-canvas
+designs (the CSS track) both formulas give the same number.
+
+- **Solved** when `score ≥ problem.matchThreshold` (CSS 99.50, HTML 98.00, HTML + CSS 98.00 by
+  default).
+- **Characters** (`charCount`): what the player wrote, whitespace excluded (so formatting isn't
+  penalized). The CSS track counts the CSS only.
+
+### Duel rules (FRONTEND)
+
+Same as ALGO (countdown, timers by difficulty, forfeit, 30 s disconnect grace, rematch, ranked vs
+private, 1 submit per 3 s), except:
+
+- **Progress** is the player's **best score** (the opponent sees `score` and `threshold`, never
+  code, previews or diff images). A later, lower score doesn't replace the best one; the same score
+  with fewer characters does.
+- **Win:** the first player to reach the threshold wins immediately (`SOLVED`).
+- **Timeout:**
+  1. Both players at 0 → draw.
+  2. Otherwise the best score wins.
+  3. Scores within 0.01 → the fewer characters win.
+  4. Same characters too → the earlier submission (of that best result) wins.
+  5. All of that equal → draw.
+- Ranked updates the FRONTEND rating only (one transaction with the match row). There is no
+  `match:run`: the live preview replaces it.
+
+### Frontend API
+
+`GET /api/problems/:slug` for a FRONTEND problem returns the brief, never the reference solution:
+
+```json
+{
+  "problem": {
+    "id": 21,
+    "slug": "css-traffic-light",
+    "title": "Traffic Light",
+    "difficulty": "MEDIUM",
+    "category": "FRONTEND",
+    "track": "CSS",
+    "description": "…markdown…",
+    "starterCode": { "html": "", "css": "/* … */" },
+    "canvas": { "width": 400, "height": 300 },
+    "palette": ["#cbd5e1", "#111827", "#ef4444", "#f59e0b", "#22c55e"],
+    "fixedHtml": "<div class=\"light\">…</div>",
+    "threshold": 99.5,
+    "editable": { "html": false, "css": true },
+    "trackRules": "The HTML is given and read-only. Write CSS only.",
+    "targetImageUrl": "/api/problems/css-traffic-light/target.png"
+  }
+}
+```
+
+`POST /api/practice/:slug/submit` with `{ css }` (CSS track), `{ html }` (HTML track) or
+`{ html, css }` returns:
+
+```json
+{
+  "score": 97.42,
+  "solved": false,
+  "threshold": 99.5,
+  "charCount": 362,
+  "diffImage": "<base64 PNG>",
+  "submission": {
+    "id": 7,
+    "status": "WRONG_ANSWER",
+    "score": 97.42,
+    "charCount": 362,
+    "createdAt": "…"
+  }
+}
+```
+
+Errors:
+
+| Status | Code                   | When                                               |
+| ------ | ---------------------- | -------------------------------------------------- |
+| 400    | `TRACK_RULE_VIOLATION` | A track rule is broken (`details` names the field) |
+| 400    | `NOT_SUPPORTED`        | `run` on a frontend problem                        |
+| 422    | `RENDER_TIMEOUT`       | The render took more than 5 s                      |
+| 422    | `RENDER_FAILED`        | Chromium couldn't render the page                  |
+| 503    | `RENDERER_UNAVAILABLE` | The renderer is down                               |
+
+Submissions are saved like ALGO ones: `language` is the track (`html`, `css`, `html_css`), `code`
+holds the HTML, `css` the CSS, plus `score` and `charCount`. `status` is `ACCEPTED` when solved,
+otherwise `WRONG_ANSWER`, so "solved" counts work for both categories.
+
+### Client
+
+- **Practice and arena:**
+  - **Target:** the image, canvas size, palette (click to copy) and track rules.
+  - **Editor:** HTML / CSS tabs in Monaco with HTML and CSS language workers. The CSS track shows
+    its fixed HTML read-only; the HTML track has no CSS tab.
+  - **Preview:** a live preview with compare tools.
+
+  Code is autosaved per problem (practice) or per match. `Ctrl+Shift+Enter` submits.
+
+- **Live preview:** `<iframe sandbox="" srcdoc>` (no scripts, opaque origin) at the exact canvas
+  size, scaled to fit. The document carries
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:` and the
+  same base styles as the renderer (`client/src/lib/frontendCanvas.js`; a server test checks it
+  matches `infra/renderer/src/document.js`). The UI notes that it can differ slightly from the
+  official render (another browser, other fonts).
+- **Compare tools:**
+  - **Slider:** the target on the left of the handle, your preview on the right.
+  - **Overlay:** the target at 50 % opacity over your preview.
+  - **Diff:** the last official diff image (red = pixels that differ).
+- **Mobile (375 px):** Target / Editor / Preview tabs.
+
+## Renderer service
+
+`infra/renderer/`: a small Node.js HTTP service (no framework) in front of Chromium.
+
+| Method | Path       | Body                                      | Returns                                                                                                                                         |
+| ------ | ---------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`  | none                                      | `{ status, browser, pool: { active, waiting, maxPages } }`                                                                                      |
+| POST   | `/render`  | `{ html, css, width, height }`            | `image/png`                                                                                                                                     |
+| POST   | `/compare` | `{ html, css, width, height, targetPng }` | `{ score, rawScore, differentPixels, blankDifferentPixels, totalPixels, diffPng, renderMs, compareMs, blockedRequests, removed }` (PNGs base64) |
+
+Errors are `{ error: { code, message } }`:
+
+- `400`: validation;
+- `413 CODE_TOO_LARGE`: HTML + CSS over 20 KB;
+- `422 RENDER_TIMEOUT` / `RENDER_FAILED`;
+- `503 RENDERER_BUSY` / `RENDERER_UNAVAILABLE`.
+
+**Image** (`infra/renderer/Dockerfile`, **820 MB**):
+
+- Built from `node:24-trixie-slim`, not the full Playwright image (3.65 GB, three browsers).
+- Only Playwright's **Chromium headless shell** (downloaded by an explicit build step, not an npm
+  postinstall) and the libraries it links against (18 packages, checked with `ldd`).
+- `libgbm.so.1` is extracted without its Mesa + LLVM dependencies: about 195 MB saved. Rendering
+  is CPU-only, and libgbm loads GPU backends only when asked.
+- npm dependencies (`playwright-core`, `pixelmatch`, `pngjs`) are installed with `--ignore-scripts`
+  and have no install scripts.
+
+**Security**, for every render:
+
+1. **Sanitize:** the composed document is parsed by the browser's own HTML parser (`DOMParser`, an
+   inert document) and `<script>`, `<iframe>`, `<frame>`, `<object>`, `<embed>`, `<applet>`,
+   `<link>`, `<base>`, `<portal>`, `<noscript>`, `<meta http-equiv>`, every `on*` attribute,
+   `srcdoc` and `javascript:` URLs are removed. CSS is inside the composed document, so a
+   `</style><script>` break-out is caught too.
+2. **Fresh browser context and page per render**, JavaScript disabled (`javaScriptEnabled: false`),
+   closed afterwards. CSS animations are disabled for the screenshot.
+3. **No network:** every request is intercepted and aborted except the canvas document itself
+   (served from memory); `data:` URIs never hit the network. The document also has a strict
+   `Content-Security-Policy` header, and Chromium runs with a black-hole proxy.
+4. **Limits:** 5 s per render (the page's context is closed on timeout), at most **2 pages** at a
+   time with a FIFO queue (max 32 waiting, then `503 RENDERER_BUSY`), code ≤ 20 KB, body ≤ 2 MB.
+5. **Container** (`infra/docker-compose.yml`):
+   - published on **127.0.0.1:5070 only**;
+   - read-only root filesystem with a 256 MB `/tmp` tmpfs;
+   - `cap_drop: ALL`, `no-new-privileges`;
+   - 1 GB memory (no swap), 1.5 CPUs, 512 processes;
+   - runs as the unprivileged `node` user;
+   - a healthcheck on `/health`.
+
+**Determinism:**
+
+- The only fonts are DejaVu.
+- `fontconfig/local.conf` maps every generic family (`serif`, `sans-serif`, `monospace`, …) to
+  DejaVu and disables hinting.
+- Chromium runs with `--force-color-profile=srgb --font-render-hinting=none`, device scale 1.
+- The canvas base styles pin the font (`"DejaVu Sans", Verdana, sans-serif`: Verdana has similar
+  metrics for previews on other systems) and hide overflow. Everything else is the browser's
+  default stylesheet.
+- The seed checks that each reference renders to exactly its own target (score 100.00).
+
+**Performance** (this machine, 8 cores): a render takes **~70–120 ms** and a compare ~20–70 ms, so
+a full submit takes about **0.1–0.2 s** server-side. The service idles at ~160 MB.
+
+**Server side** (`server/src/services/renderer/`): a provider-style client like the judge
+(`RENDERER_PROVIDER=playwright` → `providers/playwright.js`, `setRenderer()` swaps it in tests).
+`server/src/services/frontend/` holds the track rules, scoring, target files
+(`<DATA_DIR>/targets/<slug>.png`) and the practice flow.
+
+## Adding a frontend problem
+
+1. Add an entry to the track's file in `server/prisma/seed/frontend/`:
+   - `css.js` (400×300), `html.js` (600×400) or `htmlCss.js` (600×400);
+   - fields: `slug`, `title`, `difficulty`, `palette` (`#rrggbb` list), a markdown `description`
+     with the measurements players need, `reference: { html, css }`, optionally `matchThreshold`;
+   - CSS track: also `fixedHtml`;
+   - each file's `map()` adds `track`, `canvas` and `starter`.
+2. Prefer designs without text for the CSS track. Avoid backgrounds very close to white (e.g.
+   `#f1f5f9`): pixelmatch's threshold treats them as white, so they don't count.
+3. Run `npm run db:seed`. It validates the definition, renders the reference into the target PNG,
+   and checks that the reference scores 100.00 and that an empty page and the starter code score
+   at least 20 points below the threshold. If anything fails, nothing is written.
 
 ## Adding a problem
 
@@ -844,10 +1173,11 @@ code-duel/
 │       │   ├── landing/       # MockDuel (animated hero), PublicStats
 │       │   ├── layout/        # AppLayout, Navbar, ConnectionBanner
 │       │   ├── practice/      # CodeEditor (Monaco), ResultsPanel, ProblemStatement, LanguageSelect
+│       │   ├── frontend/      # FRONTEND: workspace (Target / Editor / Preview), TargetPanel, Palette, PreviewCompare, FrontendEditor, ScoreResult
 │       │   ├── match/         # timer, player progress, countdown, result modal, confetti
 │       │   └── profile/       # EloChart (hand-written SVG)
 │       ├── hooks/             # useApi, useApiForm, useReducedMotion, useSocketLifecycle, usePlaySession, …
-│       ├── lib/               # api, socket, sound (Web Audio), monaco (self-hosted), markdown, storage, site
+│       ├── lib/               # api, socket, sound (Web Audio), monaco (self-hosted), markdown, storage, site, categories, frontendCanvas (live preview document)
 │       ├── pages/             # Landing, Home, Problems, Practice, Leaderboard, Profile, MatchDetails, Match, Settings, …
 │       ├── store/             # authStore, connectionStore, playStore, preferencesStore (Zustand)
 │       ├── App.jsx            # lazy-loaded routes
@@ -855,12 +1185,13 @@ code-duel/
 │       └── main.jsx
 ├── server/                    # Express + Socket.io API
 │   ├── prisma/
-│   │   ├── schema.prisma      # User, Problem, TestCase, Match, Submission
+│   │   ├── schema.prisma      # User, UserRating, Problem, TestCase, Match, Submission
 │   │   ├── migrations/
-│   │   └── seed/              # npm run db:seed: problems/, solutions/ (reference), naive/, verify.js
+│   │   └── seed/              # npm run db:seed: problems/, solutions/, naive/, verify.js; frontend/ + frontendVerify.js
 │   ├── prisma.config.js       # Prisma 7 config (schema path, DATABASE_URL)
 │   ├── vitest.config.js
-│   ├── test/                  # API, judge, match, stats and seed tests; setup (test DB, go-judge check)
+│   ├── data/targets/          # FRONTEND target PNGs, generated by the seed (gitignored)
+│   ├── test/                  # API, judge, match, stats, seed and frontend tests; setup (test DB, go-judge + renderer check)
 │   └── src/
 │       ├── config/env.js      # Zod-validated env
 │       ├── controllers/
@@ -869,18 +1200,21 @@ code-duel/
 │       ├── socket/            # Socket.io setup, cookie auth, handlers/ (queue, room, match)
 │       ├── services/          # auth, problem, practice, elo, leaderboard, profile, matchDetails, stats
 │       │   ├── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
+│       │   ├── renderer/      # provider-style client for the renderer service (providers/playwright.js)
+│       │   ├── frontend/      # track rules, scoring, target images, public brief, practice flow
 │       │   └── match/         # MatchManager, matchmaker, problemPicker, roomCodes, matchRepository
 │       ├── validators/        # Zod request schemas
-│       ├── lib/               # prisma, jwt, authCookie, publicUser, errors, sessionEvents
+│       ├── lib/               # prisma, jwt, authCookie, publicUser, ratings, errors, sessionEvents
 │       ├── generated/prisma/  # generated Prisma client (gitignored)
 │       ├── app.js             # Express app
 │       └── index.js           # HTTP server + Socket.io + graceful shutdown
 ├── docs/                      # demo.gif + screenshots/ (README media)
 ├── scripts/docs/              # headless-Chrome scripts: icons.mjs, capture.mjs, browser.mjs
 ├── infra/
-│   ├── docker-compose.yml     # MySQL 8.4 + go-judge
+│   ├── docker-compose.yml     # MySQL 8.4 + go-judge + renderer
 │   ├── mysql/init/            # first-boot SQL (grants needed for Prisma's shadow DB)
-│   └── go-judge/              # Dockerfile (go-judge + Node + Python), mount.yaml, passwd
+│   ├── go-judge/              # Dockerfile (go-judge + Node + Python), mount.yaml, passwd
+│   └── renderer/              # Dockerfile (Node 24 slim + Chromium headless shell), fontconfig/, src/ (server, renderer, compare, document)
 ├── .vscode/                   # editor settings + recommended extensions
 ├── eslint.config.js           # flat config; React rules apply to client/src only
 ├── .prettierrc

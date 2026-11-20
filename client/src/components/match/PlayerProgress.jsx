@@ -1,6 +1,10 @@
 import UserLink from '@/components/UserLink.jsx';
+import { formatScore } from '@/lib/categories.js';
 
-/** Username (links to the profile in a new tab), ELO, progress bar and attempts for one player. */
+/**
+ * Username (links to the profile in a new tab), ELO, progress bar and attempts for one player.
+ * FRONTEND matches (player.score set): the bar is the best score, with the threshold marked.
+ */
 export default function PlayerProgress({
   player,
   label,
@@ -9,7 +13,12 @@ export default function PlayerProgress({
   accent = 'emerald',
   className = '',
 }) {
-  const percent = player.total ? Math.round((player.passed / player.total) * 100) : 0;
+  const frontend = player.score !== undefined && player.score !== null;
+  const percent = frontend
+    ? player.score
+    : player.total
+      ? Math.round((player.passed / player.total) * 100)
+      : 0;
   const bar = accent === 'emerald' ? 'bg-emerald-500' : 'bg-sky-500';
   const right = align === 'right';
   return (
@@ -28,18 +37,33 @@ export default function PlayerProgress({
           </span>
         )}
       </div>
-      <div className={`h-2 overflow-hidden rounded-full bg-zinc-800 ${right ? 'rotate-180' : ''}`}>
+      <div
+        className={`relative h-2 overflow-hidden rounded-full bg-zinc-800 ${right ? 'rotate-180' : ''}`}
+      >
         <div
           className={`h-full rounded-full transition-all duration-500 ${bar}`}
           style={{ width: `${percent}%` }}
         />
+        {frontend && player.threshold && (
+          <span
+            className="absolute inset-y-0 w-0.5 bg-white/60"
+            style={{ left: `${player.threshold}%` }}
+            aria-hidden="true"
+          />
+        )}
       </div>
       <div
         className={`flex items-center gap-3 text-xs text-zinc-400 ${right ? 'flex-row-reverse' : ''}`}
       >
-        <span className="font-mono">
-          {player.passed}/{player.total} tests
-        </span>
+        {frontend ? (
+          <span className="font-mono" data-testid="player-score">
+            {formatScore(player.score)}
+          </span>
+        ) : (
+          <span className="font-mono">
+            {player.passed}/{player.total} tests
+          </span>
+        )}
         <span>
           {player.attempts} attempt{player.attempts === 1 ? '' : 's'}
         </span>

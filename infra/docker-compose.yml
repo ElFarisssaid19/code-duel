@@ -59,6 +59,46 @@ services:
       retries: 5
       start_period: 10s
 
+  # Renders untrusted HTML/CSS with Chromium (JavaScript and network disabled) and scores it
+  # against target images. Node 24 slim + Playwright's Chromium headless shell only. See
+  # infra/renderer/.
+  renderer:
+    build: ./renderer
+    image: code-duel-renderer:1.65.0
+    container_name: code-duel-renderer
+    restart: unless-stopped
+    environment:
+      PORT: '5070'
+    ports:
+      # Never expose this outside localhost: it renders untrusted code.
+      - '127.0.0.1:${RENDERER_PORT:-5070}:5070'
+    # Hardening: read-only root FS (Chromium writes its profile to the /tmp tmpfs), no Linux
+    # capabilities, no privilege escalation, and hard resource limits.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 256m
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.5
+    pids_limit: 512
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:5070/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
 volumes:
   mysql_data:
     name: code-duel-mysql-data

@@ -11,10 +11,23 @@ import Card from '@/components/ui/Card.jsx';
 import EmptyState from '@/components/ui/EmptyState.jsx';
 import ErrorState from '@/components/ui/ErrorState.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
+import { useState } from 'react';
+import TrackBadge from '@/components/frontend/TrackBadge.jsx';
 import { useApi } from '@/hooks/useApi.js';
+import { CATEGORY_LABELS, formatScore, LANGUAGE_LABELS } from '@/lib/categories.js';
 import NotFoundPage from '@/pages/NotFoundPage.jsx';
+/** FRONTEND submissions are "solved" or not (a score), never "wrong answer". */
+function SubmissionStatus({ submission }) {
+  if (submission.score === undefined || submission.score === null) {
+    return <StatusBadge status={submission.status} />;
+  }
+  return submission.status === 'ACCEPTED' ? (
+    <Badge tone="success">Solved</Badge>
+  ) : (
+    <Badge tone="neutral">Below threshold</Badge>
+  );
+}
 
-const LANGUAGE_LABELS = { javascript: 'JavaScript', python: 'Python' };
 const STATUS_TEXT = {
   WAITING: 'Waiting',
   COUNTDOWN: 'Starting',
@@ -23,7 +36,7 @@ const STATUS_TEXT = {
   CANCELLED: 'Cancelled',
 };
 
-function PlayerCard({ player, winner, testCount }) {
+function PlayerCard({ player, winner, testCount, frontend }) {
   return (
     <Card padding="p-4" glow={winner ? 'accent' : undefined} className="min-w-0 flex-1">
       <div className="flex items-center gap-3">
@@ -40,20 +53,118 @@ function PlayerCard({ player, winner, testCount }) {
         </div>
       </div>
       <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-        <div>
-          <dt className="text-xs text-ink-subtle">Tests passed</dt>
-          <dd className="font-mono text-zinc-200">
-            {player.passed}/{testCount}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-ink-subtle">Solve time</dt>
-          <dd className="font-mono text-zinc-200">
-            {player.solveTimeMs !== null ? formatClock(player.solveTimeMs) : '—'}
-          </dd>
-        </div>
+        {frontend ? (
+          <>
+            <div>
+              <dt className="text-xs text-ink-subtle">Best score</dt>
+              <dd className="font-mono text-zinc-200" data-testid="player-best-score">
+                {formatScore(player.score)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-ink-subtle">Characters</dt>
+              <dd className="font-mono text-zinc-200">{player.charCount ?? '—'}</dd>
+            </div>
+          </>
+        ) : (
+          <AlgoStats player={player} testCount={testCount} />
+        )}
       </dl>
     </Card>
+  );
+}
+
+function AlgoStats({ player, testCount }) {
+  return (
+    <>
+      <div>
+        <dt className="text-xs text-ink-subtle">Tests passed</dt>
+        <dd className="font-mono text-zinc-200">
+          {player.passed}/{testCount}
+        </dd>
+      </div>
+      <div>
+        <dt className="text-xs text-ink-subtle">Solve time</dt>
+        <dd className="font-mono text-zinc-200">
+          {player.solveTimeMs !== null ? formatClock(player.solveTimeMs) : '—'}
+        </dd>
+      </div>
+    </>
+  );
+}
+
+/** One final render (or a placeholder when the player never submitted). */
+function PreviewImage({ url, width, height, label }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div
+        className="grid place-items-center rounded-md border border-dashed border-line-strong text-sm text-ink-subtle"
+        style={{ aspectRatio: `${width} / ${height}` }}
+      >
+        No submission
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={label}
+      width={width}
+      height={height}
+      onError={() => setFailed(true)}
+      className="block h-auto w-full rounded-md ring-1 ring-line-strong"
+      data-testid="final-preview"
+    />
+  );
+}
+
+/** FRONTEND: the target and each player's best submission, rendered by the official renderer. */
+function FinalPreviews({ match }) {
+  const { width, height } = match.canvas;
+  if (!match.previews.available) {
+    return (
+      <Card padding="p-0">
+        <EmptyState
+          icon="🔒"
+          title="Previews are hidden"
+          description="The final previews appear once the match has finished."
+        />
+      </Card>
+    );
+  }
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      <figure className="min-w-0 space-y-2">
+        <figcaption className="text-sm font-semibold text-zinc-300">Target</figcaption>
+        <img
+          src={`/api/problems/${match.problem.slug}/target.png`}
+          alt="Target"
+          width={width}
+          height={height}
+          className="block h-auto w-full rounded-md ring-1 ring-line-strong"
+        />
+      </figure>
+      {match.previews.players.map(({ userId, url }) => {
+        const player = match.players.find((p) => p.userId === userId);
+        return (
+          <figure key={userId} className="min-w-0 space-y-2">
+            <figcaption className="flex items-center gap-2 text-sm font-semibold text-zinc-300">
+              <UserLink username={player.username} />
+              <span className="font-mono font-normal text-ink-muted">
+                {formatScore(player.score)}
+              </span>
+            </figcaption>
+            <PreviewImage
+              url={url}
+              width={width}
+              height={height}
+              label={`${player.username}'s final render`}
+            />
+          </figure>
+        );
+      })}
+    </div>
   );
 }
 
@@ -88,9 +199,9 @@ function Timeline({ match }) {
                     <span className="font-mono text-xs text-ink-muted">
                       {t.offsetMs !== null ? formatClock(t.offsetMs) : '—'}
                     </span>
-                    <StatusBadge status={t.status} />
+                    <SubmissionStatus submission={t} />
                     <span className="font-mono text-zinc-200">
-                      {t.passed}/{t.total}
+                      {t.score !== undefined ? formatScore(t.score) : `${t.passed}/${t.total}`}
                     </span>
                     <span className="ml-auto text-xs text-ink-subtle">
                       {LANGUAGE_LABELS[t.language] ?? t.language}
@@ -104,6 +215,25 @@ function Timeline({ match }) {
       })}
     </div>
   );
+}
+
+/** A FRONTEND submission: the HTML and/or CSS the player wrote (per track). */
+function FrontendCode({ submission, track, path }) {
+  const parts = [
+    track !== 'CSS' && { id: 'html', code: submission.code },
+    track !== 'HTML' && { id: 'css', code: submission.css ?? '' },
+  ].filter(Boolean);
+  return parts.map((part) => (
+    <div
+      key={part.id}
+      className="flex min-h-0 flex-1 flex-col border-b border-line last:border-b-0"
+    >
+      <p className="px-3 py-1 text-xs font-medium text-ink-subtle uppercase">{part.id}</p>
+      <div className="min-h-0 flex-1">
+        <ReadOnlyCode code={part.code} language={part.id} path={`${path}/index.${part.id}`} />
+      </div>
+    </div>
+  ));
 }
 
 function FinalCode({ match }) {
@@ -128,9 +258,11 @@ function FinalCode({ match }) {
               <UserLink username={player.username} className="font-semibold text-ink" />
               {submission && (
                 <>
-                  <StatusBadge status={submission.status} />
+                  <SubmissionStatus submission={submission} />
                   <span className="font-mono text-ink-muted">
-                    {submission.passed}/{submission.total}
+                    {submission.score !== undefined
+                      ? formatScore(submission.score)
+                      : `${submission.passed}/${submission.total}`}
                   </span>
                   <span className="text-ink-subtle">
                     · {LANGUAGE_LABELS[submission.language] ?? submission.language}
@@ -139,10 +271,16 @@ function FinalCode({ match }) {
               )}
             </div>
             <div
-              className="h-80 overflow-hidden rounded-xl border border-line"
+              className="flex h-80 flex-col overflow-hidden rounded-xl border border-line"
               data-testid="final-code"
             >
-              {submission ? (
+              {submission && match.category === 'FRONTEND' ? (
+                <FrontendCode
+                  submission={submission}
+                  track={match.track}
+                  path={`match-details-${match.id}/${userId}`}
+                />
+              ) : submission ? (
                 <ReadOnlyCode
                   code={submission.code}
                   language={submission.language}
@@ -199,6 +337,7 @@ export default function MatchDetailsPage() {
   if (loading) return <DetailsSkeleton />;
 
   const { match } = data;
+  const frontend = match.category === 'FRONTEND';
   return (
     <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-8 sm:py-12">
       <header className="space-y-4 motion-safe:animate-fade-up">
@@ -206,6 +345,7 @@ export default function MatchDetailsPage() {
           <Badge tone={match.mode === 'RANKED' ? 'accent' : 'info'}>
             {match.mode === 'RANKED' ? 'Ranked' : 'Private'}
           </Badge>
+          {frontend && <Badge tone="info">{CATEGORY_LABELS.FRONTEND}</Badge>}
           <span>{STATUS_TEXT[match.status]}</span>
           {match.endReason && <span>· {REASON_LABELS[match.endReason]}</span>}
           {match.durationMs !== null && <span>· {formatClock(match.durationMs)} played</span>}
@@ -216,6 +356,7 @@ export default function MatchDetailsPage() {
             {match.problem.title}
           </Link>
           <DifficultyBadge difficulty={match.problem.difficulty} />
+          {frontend && <TrackBadge track={match.track} />}
         </h1>
         <div className="flex flex-col gap-3 sm:flex-row">
           {match.players.map((p) => (
@@ -224,14 +365,24 @@ export default function MatchDetailsPage() {
               player={p}
               winner={p.userId === match.winnerId}
               testCount={match.testCount}
+              frontend={frontend}
             />
           ))}
         </div>
       </header>
 
+      {frontend && (
+        <section className="space-y-4" aria-labelledby="previews-title">
+          <h2 id="previews-title" className="text-lg font-semibold">
+            Final previews
+          </h2>
+          <FinalPreviews match={match} />
+        </section>
+      )}
+
       <section className="space-y-4" aria-labelledby="timeline-title">
         <h2 id="timeline-title" className="text-lg font-semibold">
-          Submission timeline
+          {frontend ? 'Score timeline' : 'Submission timeline'}
         </h2>
         <Timeline match={match} />
       </section>

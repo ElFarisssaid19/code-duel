@@ -7,6 +7,8 @@ import MuteToggle from '@/components/MuteToggle.jsx';
 import ConnectionBanner from '@/components/layout/ConnectionBanner.jsx';
 import Confetti from '@/components/match/Confetti.jsx';
 import Countdown from '@/components/match/Countdown.jsx';
+import FrontendWorkspace from '@/components/frontend/FrontendWorkspace.jsx';
+import { submissionPayload } from '@/components/frontend/payload.js';
 import MatchTimer from '@/components/match/MatchTimer.jsx';
 import PlayerProgress from '@/components/match/PlayerProgress.jsx';
 import ResultModal from '@/components/match/ResultModal.jsx';
@@ -23,6 +25,7 @@ import { useNow } from '@/hooks/useNow.js';
 import { useReducedMotion } from '@/hooks/useReducedMotion.js';
 import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { useToasts } from '@/hooks/useToasts.js';
+import { formatScore, TRACK_LABELS } from '@/lib/categories.js';
 import { playSound } from '@/lib/sound.js';
 import { request, socket } from '@/lib/socket.js';
 import { loadItem, saveItem } from '@/lib/storage.js';
@@ -77,10 +80,143 @@ function reducer(state, action) {
   }
 }
 
-function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
-  const { problem, me, opponent } = state;
+/** Focus-mode header: logo, mode, timer and both players' progress (tests or best score). */
+function ArenaHeader({ state, offsetMs, typingUntil }) {
+  const { me, opponent } = state;
   const live = state.status === 'ACTIVE';
   const now = useNow(250);
+  const modeLabel = state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel';
+  return (
+    <header className="border-b border-line bg-canvas/90 px-4 pt-2 pb-3">
+      {/* Focus mode: no navbar, just a minimal header */}
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <Logo className="text-sm" />
+        <div className="flex items-center gap-1">
+          <span className="eyebrow">
+            {state.category === 'FRONTEND'
+              ? `${modeLabel} · Frontend${state.problem?.track ? ` · ${TRACK_LABELS[state.problem.track]}` : ''}`
+              : modeLabel}
+          </span>
+          <MuteToggle />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 items-center gap-x-4 gap-y-2 lg:flex lg:gap-4">
+        <div className="col-span-2 flex justify-center lg:order-2 lg:col-span-1 lg:shrink-0 lg:px-2">
+          <MatchTimer endsAt={state.endsAt} now={now} offsetMs={offsetMs} stopped={!live} />
+        </div>
+        <PlayerProgress player={me} label="you" className="lg:order-1" />
+        <PlayerProgress
+          player={opponent}
+          align="right"
+          accent="sky"
+          typing={live && now < typingUntil}
+          className="lg:order-3"
+        />
+      </div>
+    </header>
+  );
+}
+
+const frontendKey = (matchId, part) => `code-duel:match:${matchId}:frontend:${part}`;
+const noop = () => {};
+
+/** FRONTEND arena: Target | Editor | Preview (tabs below 1024 px). Submit = official score. */
+function FrontendArena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
+  const { problem } = state;
+  const live = state.status === 'ACTIVE';
+  const [html, setHtml] = useState(
+    () => loadItem(frontendKey(matchId, 'html')) ?? problem.starterCode.html,
+  );
+  const [css, setCss] = useState(
+    () => loadItem(frontendKey(matchId, 'css')) ?? problem.starterCode.css,
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [pane, setPane] = useState('target');
+  const busy = useRef(false);
+  const lastPing = useRef(0);
+
+  function ping() {
+    if (live && Date.now() - lastPing.current > ACTIVITY_PING_MS) {
+      lastPing.current = Date.now();
+      socket.emit('match:activity');
+    }
+  }
+  const changeHtml = (next) => {
+    setHtml(next);
+    saveItem(frontendKey(matchId, 'html'), next); // restored after a refresh
+    ping();
+  };
+  const changeCss = (next) => {
+    setCss(next);
+    saveItem(frontendKey(matchId, 'css'), next);
+    ping();
+  };
+
+  const submit = useCallback(async () => {
+    if (busy.current || !live) return;
+    busy.current = true;
+    setSubmitting(true);
+    setError(null);
+    setPane('preview');
+    try {
+      const data = await request('match:submit', submissionPayload(problem, { html, css }));
+      setResult(data.result);
+    } catch (err) {
+      setError(err);
+    } finally {
+      busy.current = false;
+      setSubmitting(false);
+    }
+  }, [problem, html, css, live]);
+  useRunShortcuts(noop, submit);
+
+  return (
+    <div className="flex min-h-dvh flex-col lg:h-dvh">
+      <ConnectionBanner />
+      <ArenaHeader state={state} offsetMs={offsetMs} typingUntil={typingUntil} />
+      <FrontendWorkspace
+        problem={problem}
+        pathPrefix={`match-${matchId}`}
+        html={html}
+        css={css}
+        onHtml={changeHtml}
+        onCss={changeCss}
+        onSubmit={submit}
+        submitting={submitting}
+        result={result}
+        error={error}
+        pane={pane}
+        onPane={setPane}
+        toolbar={
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
+            <span className="text-xs text-ink-subtle">
+              Solved at <span className="font-mono text-ink">{formatScore(problem.threshold)}</span>
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button variant="danger-outline" onClick={onForfeit} disabled={!live}>
+                Forfeit
+              </Button>
+              <Button
+                onClick={submit}
+                loading={submitting}
+                disabled={submitting || !live}
+                title="Submit (Ctrl+Shift+Enter)"
+              >
+                Submit
+              </Button>
+            </div>
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
+  const { problem } = state;
+  const live = state.status === 'ACTIVE';
 
   const preferredLanguage = useAuthStore((s) => s.user?.preferredLanguage);
   const [language, setLanguage] = useState(() => {
@@ -151,31 +287,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
   return (
     <div className="flex min-h-dvh flex-col lg:h-dvh">
       <ConnectionBanner />
-      <header className="border-b border-line bg-canvas/90 px-4 pt-2 pb-3">
-        {/* Focus mode: no navbar, just a minimal header */}
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <Logo className="text-sm" />
-          <div className="flex items-center gap-1">
-            <span className="eyebrow">
-              {state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel'}
-            </span>
-            <MuteToggle />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 items-center gap-x-4 gap-y-2 lg:flex lg:gap-4">
-          <div className="col-span-2 flex justify-center lg:order-2 lg:col-span-1 lg:shrink-0 lg:px-2">
-            <MatchTimer endsAt={state.endsAt} now={now} offsetMs={offsetMs} stopped={!live} />
-          </div>
-          <PlayerProgress player={me} label="you" className="lg:order-1" />
-          <PlayerProgress
-            player={opponent}
-            align="right"
-            accent="sky"
-            typing={live && now < typingUntil}
-            className="lg:order-3"
-          />
-        </div>
-      </header>
+      <ArenaHeader state={state} offsetMs={offsetMs} typingUntil={typingUntil} />
 
       <Tabs
         className="lg:hidden"
@@ -297,7 +409,7 @@ function MatchSession({ matchId }) {
         const snapshot = await request('match:rejoin', { matchId });
         if (cancelled) return;
         syncClock(snapshot.serverNow);
-        opponentPassed.current = snapshot.opponent.passed;
+        opponentPassed.current = snapshot.opponent.score ?? snapshot.opponent.passed;
         dispatch({ type: 'snapshot', snapshot });
       } catch (err) {
         if (!cancelled) setLoadError(err);
@@ -317,11 +429,18 @@ function MatchSession({ matchId }) {
       },
       'match:submit:result': (p) => dispatch({ type: 'myProgress', progress: p.progress }),
       'opponent:progress': (progress) => {
-        if (progress.passed > opponentPassed.current) {
+        // FRONTEND progress is the best score; ALGO progress is the number of tests passed.
+        const value = progress.score ?? progress.passed;
+        if (value > opponentPassed.current) {
           playSound('opponentProgress');
-          toast(`Your opponent now passes ${progress.passed}/${progress.total} tests`, 'info');
+          toast(
+            progress.score !== undefined
+              ? `Your opponent now scores ${formatScore(progress.score)}`
+              : `Your opponent now passes ${progress.passed}/${progress.total} tests`,
+            'info',
+          );
         }
-        opponentPassed.current = Math.max(opponentPassed.current, progress.passed);
+        opponentPassed.current = Math.max(opponentPassed.current, value);
         dispatch({ type: 'opponentProgress', progress });
       },
       'opponent:activity': () => setTypingUntil(Date.now() + TYPING_VISIBLE_MS),
@@ -393,7 +512,15 @@ function MatchSession({ matchId }) {
   const ended = state.status === 'FINISHED' || state.status === 'CANCELLED';
   return (
     <>
-      {state.problem ? (
+      {state.problem?.category === 'FRONTEND' ? (
+        <FrontendArena
+          state={state}
+          matchId={matchId}
+          offsetMs={offsetMs}
+          typingUntil={typingUntil}
+          onForfeit={() => setConfirmForfeit(true)}
+        />
+      ) : state.problem ? (
         <Arena
           state={state}
           matchId={matchId}

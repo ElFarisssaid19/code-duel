@@ -3,6 +3,7 @@ import { HttpError } from '../lib/errors.js';
 import { verifyToken } from '../lib/jwt.js';
 import { prisma } from '../lib/prisma.js';
 import { publicUserSelect, toPublicUser } from '../lib/publicUser.js';
+import { newRatingRows } from '../lib/ratings.js';
 import { emitSessionsRevoked } from '../lib/sessionEvents.js';
 
 const BCRYPT_COST = 12;
@@ -22,7 +23,7 @@ function toSession(row) {
 export async function registerUser({ username, email, password }) {
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
   const row = await prisma.user.create({
-    data: { username, email, passwordHash },
+    data: { username, email, passwordHash, ratings: newRatingRows },
     select: sessionSelect,
   });
   return toSession(row);
@@ -35,7 +36,10 @@ export async function authenticate({ identifier, password }) {
     ? { email: identifier.toLowerCase() }
     : { username: identifier };
 
-  const user = await prisma.user.findUnique({ where });
+  const user = await prisma.user.findUnique({
+    where,
+    select: { ...sessionSelect, passwordHash: true },
+  });
   const passwordOk = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
 
   if (!user || !passwordOk) {
@@ -51,9 +55,33 @@ export async function authenticate({ identifier, password }) {
 export async function getSession(token) {
   const claims = await verifyToken(token);
   if (!claims) return null;
-  const row = await prisma.user.findUnique({ where: { id: claims.userId }, select: sessionSelect });
+  const row = await findSessionRow(claims.userId);
   if (!row || row.tokenVersion !== claims.tokenVersion) return null;
   return toSession(row);
+}
+
+/**
+ * The user + their rating rows in ONE query (this runs on every authenticated request and
+ * socket connection; a Prisma relation load would be a second query).
+ */
+async function findSessionRow(userId) {
+  const rows = await prisma.$queryRaw`
+    SELECT u.id, u.username, u.email, u.preferredLanguage, u.createdAt, u.tokenVersion,
+           r.category, r.elo, r.wins, r.losses, r.draws, r.bestElo
+    FROM \`User\` u LEFT JOIN UserRating r ON r.userId = u.id
+    WHERE u.id = ${userId}`;
+  if (rows.length === 0) return null;
+  const ratings = rows
+    .filter((r) => r.category)
+    .map(({ category, elo, wins, losses, draws, bestElo }) => ({
+      category,
+      elo,
+      wins,
+      losses,
+      draws,
+      bestElo,
+    }));
+  return { ...rows[0], ratings };
 }
 
 /** Bumps tokenVersion: every existing token (and connected socket) of the user is revoked. */
@@ -97,5 +125,5 @@ export async function updatePreferences(userId, { preferredLanguage }) {
     data: { preferredLanguage },
     select: publicUserSelect,
   });
-  return row;
+  return toPublicUser(row);
 }

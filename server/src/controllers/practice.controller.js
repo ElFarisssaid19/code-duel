@@ -1,14 +1,15 @@
 import { judgePractice } from '../services/practice.service.js';
 
 const judge = (mode) => async (req, res) => {
-  const { language, code } = req.body;
-  res.json(
-    await judgePractice({ userId: req.user.id, slug: req.params.slug, language, code, mode }),
-  );
+  res.json(await judgePractice({ ...req.body, userId: req.user.id, slug: req.params.slug, mode }));
 };
 
 /** POST /api/practice/:slug/run { language, code } → { result } (sample tests) */
 export const run = judge('run');
 
-/** POST /api/practice/:slug/submit { language, code } → { result, submission } (all tests) */
+/**
+ * POST /api/practice/:slug/submit
+ *   ALGO     { language, code } → { result, submission } (all tests)
+ *   FRONTEND { html, css }      → { score, solved, threshold, charCount, diffImage, submission }
+ */
 export const submit = judge('submit');

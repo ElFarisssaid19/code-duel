@@ -2,9 +2,15 @@
  * Match details. Summary + submission timeline are visible to every logged-in user; the final
  * code is a separate call, only for the two participants and only once the match is FINISHED.
  * Never includes test data (submissions only store counts and statuses).
+ *
+ * FRONTEND matches also have scores, and final previews: each player's best submission rendered
+ * to a PNG, visible to every logged-in user once the match is FINISHED (an image, not code;
+ * never while the match is live).
  */
 import { HttpError } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
+import { applyTrackRules } from './frontend/trackRules.js';
+import { renderPage } from './renderer/index.js';
 
 const notFound = () => new HttpError(404, 'NOT_FOUND', 'Match not found');
 
@@ -27,7 +33,16 @@ export async function getMatchDetails(matchId, viewerId) {
     include: {
       player1: { select: { id: true, username: true } },
       player2: { select: { id: true, username: true } },
-      problem: { select: { title: true, slug: true, difficulty: true } },
+      problem: {
+        select: {
+          title: true,
+          slug: true,
+          difficulty: true,
+          track: true,
+          canvasWidth: true,
+          canvasHeight: true,
+        },
+      },
       submissions: {
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         select: {
@@ -37,12 +52,16 @@ export async function getMatchDetails(matchId, viewerId) {
           status: true,
           passed: true,
           total: true,
+          score: true,
+          charCount: true,
           createdAt: true,
         },
       },
     },
   });
   if (!match) throw notFound();
+  const frontend = match.category === 'FRONTEND';
+  const { track, canvasWidth, canvasHeight, ...problem } = match.problem;
 
   const player = (n) => {
     const user = match[`player${n}`];
@@ -68,17 +87,35 @@ export async function getMatchDetails(matchId, viewerId) {
         passed === match.testCount && reachedAt && match.startedAt
           ? reachedAt - match.startedAt
           : null,
+      ...(frontend && {
+        score: match[`player${n}Score`] === null ? 0 : Number(match[`player${n}Score`]),
+        charCount: match[`player${n}Chars`],
+      }),
     };
   };
   const access = codeAccess(match, viewerId);
+  const finished = match.status === 'FINISHED';
 
   return {
     id: match.id,
     mode: match.mode,
+    ...(frontend && {
+      category: match.category,
+      track,
+      canvas: { width: canvasWidth, height: canvasHeight },
+      previews: {
+        available: finished,
+        reason: finished ? null : 'MATCH_NOT_FINISHED',
+        players: [match.player1Id, match.player2Id].map((userId) => ({
+          userId,
+          url: finished ? `/api/matches/${match.id}/preview/${userId}.png` : null,
+        })),
+      },
+    }),
     status: match.status,
     endReason: match.endReason,
     winnerId: match.winnerId,
-    problem: match.problem,
+    problem,
     testCount: match.testCount,
     timeLimitMs: match.durationMs,
     durationMs: match.startedAt && match.endedAt ? match.endedAt - match.startedAt : null,
@@ -93,20 +130,53 @@ export async function getMatchDetails(matchId, viewerId) {
       status: s.status,
       passed: s.passed,
       total: s.total,
+      ...(frontend && { score: s.score === null ? null : Number(s.score), charCount: s.charCount }),
     })),
     code: { available: access === null, reason: access },
   };
+}
+
+/** A player's best FRONTEND submission in a match: highest score, then fewer characters, then earliest. */
+function bestFrontendSubmission(matchId, userId, select) {
+  return prisma.submission.findFirst({
+    where: { matchId, userId },
+    orderBy: [{ score: 'desc' }, { charCount: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    select,
+  });
 }
 
 /** GET /api/matches/:id/code: each player's last submission. 403 unless allowed. 3 queries. */
 export async function getMatchCode(matchId, viewerId) {
   const match = await prisma.match.findUnique({
     where: { id: matchId },
-    select: { status: true, player1Id: true, player2Id: true },
+    select: { status: true, player1Id: true, player2Id: true, category: true },
   });
   if (!match) throw notFound();
   const denied = codeAccess(match, viewerId);
   if (denied) throw new HttpError(403, denied, CODE_ERRORS[denied]);
+
+  if (match.category === 'FRONTEND') {
+    // The submission that counted: the best one (not the last).
+    const best = (userId) =>
+      bestFrontendSubmission(matchId, userId, {
+        language: true,
+        code: true,
+        css: true,
+        status: true,
+        passed: true,
+        total: true,
+        score: true,
+        charCount: true,
+        createdAt: true,
+      }).then((s) => s && { ...s, score: Number(s.score) });
+    const [one, two] = await Promise.all([best(match.player1Id), best(match.player2Id)]);
+    return {
+      players: [
+        { userId: match.player1Id, submission: one },
+        { userId: match.player2Id, submission: two },
+      ],
+    };
+  }
 
   const last = (userId) =>
     prisma.submission.findFirst({
@@ -128,4 +198,53 @@ export async function getMatchCode(matchId, viewerId) {
       { userId: match.player2Id, submission: two },
     ],
   };
+}
+
+const previewCache = new Map(); // submission id → PNG (finished matches never change)
+const MAX_CACHED_PREVIEWS = 200;
+
+/**
+ * GET /api/matches/:id/preview/:userId.png: the player's best FRONTEND submission, rendered.
+ * Any logged-in user, once the match is FINISHED. A player without submissions gets 404.
+ */
+export async function getMatchPreview(matchId, userId) {
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    select: {
+      status: true,
+      category: true,
+      player1Id: true,
+      player2Id: true,
+      problem: { select: { track: true, fixedHtml: true, canvasWidth: true, canvasHeight: true } },
+    },
+  });
+  if (!match || match.category !== 'FRONTEND') throw notFound();
+  if (userId !== match.player1Id && userId !== match.player2Id) throw notFound();
+  if (match.status !== 'FINISHED') {
+    throw new HttpError(
+      403,
+      'MATCH_NOT_FINISHED',
+      'Previews are only visible once the match has finished.',
+    );
+  }
+  const submission = await bestFrontendSubmission(matchId, userId, {
+    id: true,
+    code: true,
+    css: true,
+  });
+  if (!submission) throw new HttpError(404, 'NOT_FOUND', 'This player submitted nothing.');
+
+  const cached = previewCache.get(submission.id);
+  if (cached) return cached;
+  const { problem } = match;
+  const page = applyTrackRules(problem, { html: submission.code, css: submission.css ?? '' });
+  const png = await renderPage({
+    ...page,
+    width: problem.canvasWidth,
+    height: problem.canvasHeight,
+  });
+  if (previewCache.size >= MAX_CACHED_PREVIEWS)
+    previewCache.delete(previewCache.keys().next().value);
+  previewCache.set(submission.id, png);
+  return png;
 }

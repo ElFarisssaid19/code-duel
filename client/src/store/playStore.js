@@ -6,15 +6,20 @@ import { create } from 'zustand';
  */
 export const usePlayStore = create((set) => ({
   presence: { type: 'idle' }, // from state:get
-  queue: null, // { elapsedMs, window } while searching
-  room: null, // { code, difficulty, status, players, expiresAt }
+  queue: null, // { elapsedMs, window, category, track } while searching
+  room: null, // { code, difficulty, category, track, status, players, expiresAt }
   notice: null, // last background error, e.g. match creation failed
   setPresence: (presence) =>
     set({
       presence,
       queue:
         presence.type === 'queue'
-          ? { elapsedMs: presence.elapsedMs ?? 0, window: presence.window }
+          ? {
+              elapsedMs: presence.elapsedMs ?? 0,
+              window: presence.window,
+              category: presence.category ?? 'ALGO',
+              track: presence.track ?? null,
+            }
           : null,
       room: presence.type === 'room' ? presence.room : null,
     }),

@@ -4,18 +4,35 @@ import { prisma } from '../src/lib/prisma.js';
 let seq = 0;
 const at = (minutes) => new Date(Date.UTC(2026, 0, 1, 12, minutes));
 
-export function createUser(username, data = {}) {
+/**
+ * A user. Rating fields (elo, wins, losses, draws, bestElo) go to their ALGO UserRating row;
+ * `frontend: { … }` sets the FRONTEND row the same way. Returns the user with `elo` (ALGO).
+ */
+export async function createUser(username, data = {}) {
   seq += 1;
-  return prisma.user.create({
+  const { elo, wins, losses, draws, bestElo, frontend, ...userData } = data;
+  const algo = { elo, wins, losses, draws, bestElo };
+  const user = await prisma.user.create({
     data: {
       username,
       email: `${username}@stats.test`,
       passwordHash: 'x',
       createdAt: at(-1000 + seq),
-      ...data,
+      ...userData,
+      ratings: {
+        create: [
+          { category: 'ALGO', ...algo },
+          { category: 'FRONTEND', ...frontend },
+        ],
+      },
     },
   });
+  return { ...user, elo: elo ?? 1000 };
 }
+
+/** A user's rating row in a category (ALGO by default). */
+export const ratingOf = (userId, category = 'ALGO') =>
+  prisma.userRating.findUnique({ where: { userId_category: { userId, category } } });
 
 export function createProblemRow(slug, difficulty = 'EASY') {
   return prisma.problem.create({

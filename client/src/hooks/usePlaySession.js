@@ -38,7 +38,11 @@ export function usePlaySession() {
       playSound('matchFound');
       navigate(`/match/${matchId}`);
     };
-    const onQueue = (payload) => setQueue(payload.status === 'searching' ? payload : null);
+    // queue:status ticks carry { elapsedMs, window }: keep the category/track we joined with.
+    const onQueue = (payload) =>
+      setQueue(
+        payload.status === 'searching' ? { ...usePlayStore.getState().queue, ...payload } : null,
+      );
     const onRoom = (room) => setRoom(room.status === 'open' ? room : null);
     const onMatchError = (error) => setNotice(error.message);
 

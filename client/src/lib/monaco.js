@@ -6,11 +6,16 @@
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
+import CssWorker from 'monaco-editor/language/css/css.worker?worker';
+import HtmlWorker from 'monaco-editor/language/html/html.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 
+// Language workers: completion + validation for JS (algorithm problems) and HTML/CSS (frontend).
 self.MonacoEnvironment = {
   getWorker(_workerId, label) {
     if (label === 'typescript' || label === 'javascript') return new TsWorker();
+    if (label === 'css') return new CssWorker();
+    if (label === 'html') return new HtmlWorker();
     return new EditorWorker();
   },
 };

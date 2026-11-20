@@ -9,6 +9,7 @@ export async function resetDatabase() {
     prisma.match.deleteMany(),
     prisma.testCase.deleteMany(),
     prisma.problem.deleteMany(),
+    prisma.userRating.deleteMany(),
     prisma.user.deleteMany(),
   ]);
 }

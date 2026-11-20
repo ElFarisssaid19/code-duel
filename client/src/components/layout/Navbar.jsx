@@ -24,6 +24,8 @@ const linkClass = (active) =>
 /** Global navigation for logged-in pages (hidden in the match arena). */
 export default function Navbar() {
   const user = useAuthStore((s) => s.user);
+  const algoElo = user.ratings?.ALGO?.elo ?? user.elo;
+  const frontendElo = user.ratings?.FRONTEND?.elo ?? 1000;
   const logout = useAuthStore((s) => s.logout);
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
@@ -69,12 +71,29 @@ export default function Navbar() {
           <MuteToggle />
           <Link
             to={`/u/${user.username}`}
-            className="rounded-full bg-emerald-500/10 px-3 py-1 font-mono text-sm font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition ring-inset hover:bg-emerald-500/20"
-            title="Your ELO"
-            aria-label={`Your ELO: ${user.elo}. Open your profile`}
+            className="flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 font-mono text-sm font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition ring-inset hover:bg-emerald-500/20"
+            title="Your ELO: Algorithms · Frontend"
+            aria-label={`Your ELO: ${algoElo} in Algorithms, ${frontendElo} in Frontend. Open your profile`}
             data-testid="nav-elo"
           >
-            {user.elo}
+            <span>
+              <span
+                className="mr-1 text-[0.65rem] font-medium text-emerald-300/70"
+                aria-hidden="true"
+              >
+                A
+              </span>
+              {algoElo}
+            </span>
+            <span className="text-emerald-300/40" aria-hidden="true">
+              ·
+            </span>
+            <span className="text-sky-300" data-testid="nav-elo-frontend">
+              <span className="mr-1 text-[0.65rem] font-medium text-sky-300/70" aria-hidden="true">
+                F
+              </span>
+              {frontendElo}
+            </span>
           </Link>
           <button
             type="button"

@@ -13,6 +13,13 @@ const envSchema = z.object({
     .min(32, 'JWT_SECRET must be at least 32 characters (openssl rand -hex 64)'),
   JUDGE_URL: z.url({ error: 'JUDGE_URL must be a valid URL, e.g. http://localhost:5050' }),
   JUDGE_PROVIDER: z.enum(['gojudge']).default('gojudge'),
+  /** HTML/CSS renderer for FRONTEND problems (infra/renderer). Not 5060/5061: fetch() blocks them. */
+  RENDERER_URL: z
+    .url({ error: 'RENDERER_URL must be a valid URL, e.g. http://localhost:5070' })
+    .default('http://localhost:5070'),
+  RENDERER_PROVIDER: z.enum(['playwright']).default('playwright'),
+  /** Where the seed writes FRONTEND target images (relative to server/ or absolute). */
+  DATA_DIR: z.string().default('data'),
 });
 
 const parsed = envSchema.safeParse(process.env);

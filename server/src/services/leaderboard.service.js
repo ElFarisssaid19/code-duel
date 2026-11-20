@@ -1,10 +1,11 @@
 /**
- * Leaderboard: users with at least one ranked match (W/L/D only count ranked games), ordered by
- * elo desc, wins desc, oldest account first. Equal ELO shares a rank (RANK(): 1, 1, 3).
+ * Leaderboard, per category (ALGO | FRONTEND): users with at least one ranked match in that
+ * category (W/L/D only count ranked games), ordered by elo desc, wins desc, oldest account first.
+ * Equal ELO shares a rank (RANK(): 1, 1, 3).
  */
 import { prisma } from '../lib/prisma.js';
 
-export const START_ELO = 1000;
+export { START_ELO } from '../lib/ratings.js';
 
 export const winRate = (wins, gamesPlayed) =>
   gamesPlayed ? Math.round((wins / gamesPlayed) * 1000) / 10 : 0;
@@ -24,35 +25,38 @@ function toRow(r) {
   };
 }
 
-/** The ranked row of one user, or null if they haven't played a ranked match. 1 query. */
-export async function rankOf(userId) {
+/** The ranked row of one user in a category, or null if they haven't played ranked there. 1 query. */
+export async function rankOf(userId, category = 'ALGO') {
   const [row] = await prisma.$queryRaw`
     SELECT * FROM (
-      SELECT id, username, elo, wins, losses, draws,
-             RANK() OVER (ORDER BY elo DESC) AS rnk
-      FROM \`User\`
-      WHERE wins + losses + draws > 0
+      SELECT u.id, u.username, r.elo, r.wins, r.losses, r.draws,
+             RANK() OVER (ORDER BY r.elo DESC) AS rnk
+      FROM UserRating r JOIN \`User\` u ON u.id = r.userId
+      WHERE r.category = ${category} AND r.wins + r.losses + r.draws > 0
     ) ranked
     WHERE id = ${userId}`;
   return row ? toRow(row) : null;
 }
 
-/** One page of the leaderboard + the current user's row. 3 queries, whatever the page size. */
-export async function getLeaderboard({ page, limit, userId }) {
+/** One page of a category's leaderboard + the current user's row. 3 queries, whatever the page size. */
+export async function getLeaderboard({ page, limit, userId, category = 'ALGO' }) {
   const offset = (page - 1) * limit;
   const [rows, [{ total }], me] = await Promise.all([
     prisma.$queryRaw`
-      SELECT id, username, elo, wins, losses, draws,
-             RANK() OVER (ORDER BY elo DESC) AS rnk
-      FROM \`User\`
-      WHERE wins + losses + draws > 0
-      ORDER BY elo DESC, wins DESC, createdAt ASC, id ASC
+      SELECT u.id, u.username, r.elo, r.wins, r.losses, r.draws,
+             RANK() OVER (ORDER BY r.elo DESC) AS rnk
+      FROM UserRating r JOIN \`User\` u ON u.id = r.userId
+      WHERE r.category = ${category} AND r.wins + r.losses + r.draws > 0
+      ORDER BY r.elo DESC, r.wins DESC, u.createdAt ASC, u.id ASC
       LIMIT ${limit} OFFSET ${offset}`,
-    prisma.$queryRaw`SELECT COUNT(*) AS total FROM \`User\` WHERE wins + losses + draws > 0`,
-    rankOf(userId),
+    prisma.$queryRaw`
+      SELECT COUNT(*) AS total FROM UserRating r
+      WHERE r.category = ${category} AND r.wins + r.losses + r.draws > 0`,
+    rankOf(userId, category),
   ]);
   const entries = rows.map(toRow);
   return {
+    category,
     page,
     limit,
     total: Number(total),
