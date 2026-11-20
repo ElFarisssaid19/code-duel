@@ -121,7 +121,7 @@ function RoomPanel({ room, busy, disabled, onCreate, onClose }) {
   }
   return (
     <Panel title="Private room">
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
         <label className="sr-only" htmlFor="room-difficulty">
           Difficulty
         </label>
@@ -188,12 +188,10 @@ function JoinPanel({ busy, disabled, onJoin }) {
 
 export default function HomePage() {
   const user = useAuthStore((s) => s.user);
-  const logout = useAuthStore((s) => s.logout);
   const { queue, room, notice, setQueue, setRoom, setNotice } = usePlayStore();
   const socketStatus = useConnectionStore((s) => s.socketStatus);
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
-  const [loggingOut, setLoggingOut] = useState(false);
 
   // ELO / W-L-D change after every ranked match: refresh them when coming back home.
   useEffect(() => {
@@ -217,7 +215,7 @@ export default function HomePage() {
   const offline = socketStatus !== 'connected';
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-5 px-4 py-12">
+    <main className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-4 py-8 sm:py-12">
       <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 shadow-xl shadow-black/30">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -271,35 +269,19 @@ export default function HomePage() {
         </>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          to="/problems"
-          className="text-sm font-medium text-emerald-400 hover:text-emerald-300"
-        >
-          Practice problems →
+      <p className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm text-zinc-500">
+        <Link to="/problems" className="hover:text-zinc-300">
+          Practice problems
         </Link>
-        <div className="flex items-center gap-4">
-          {import.meta.env.DEV && (
-            <Link to="/dev/status" className="text-sm text-zinc-500 hover:text-zinc-300">
-              Dev status
-            </Link>
-          )}
-          <Button
-            variant="secondary"
-            loading={loggingOut}
-            onClick={async () => {
-              setLoggingOut(true);
-              try {
-                await logout(); // ProtectedRoute then redirects to /login
-              } catch {
-                setLoggingOut(false);
-              }
-            }}
-          >
-            Log out
-          </Button>
-        </div>
-      </div>
+        <Link to="/leaderboard" className="hover:text-zinc-300">
+          Leaderboard
+        </Link>
+        {import.meta.env.DEV && (
+          <Link to="/dev/status" className="hover:text-zinc-300">
+            Dev status
+          </Link>
+        )}
+      </p>
     </main>
   );
 }

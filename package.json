@@ -41,6 +41,7 @@
     "prettier-plugin-tailwindcss": "^0.8.1"
   },
   "overrides": {
-    "dompurify": "^3.4.18"
+    "dompurify": "^3.4.18",
+    "effect": "^3.22.5"
   }
 }

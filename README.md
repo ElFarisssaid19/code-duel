@@ -4,8 +4,9 @@ Real-time 1v1 coding battles. Two players get the same problem, write code in th
 the first correct solution wins. Code runs in a sandbox (go-judge) and results update live over
 WebSockets. Players get Elo ratings.
 
-> **Status:** Phase 3 is done: authentication, problems, sandboxed code execution, solo practice,
-> and real-time 1v1 duels (ranked matchmaking with ELO, and private rooms).
+> **Status:** Phase 4 is done: authentication, 16 problems, sandboxed code execution, solo
+> practice, real-time 1v1 duels (ranked with ELO, private rooms), a leaderboard, public profiles
+> with ELO history, match history and match details.
 
 ## Tech stack
 
@@ -53,8 +54,8 @@ npm run dev
 ```
 
 Open <http://localhost:5173>. You'll land on **/login**: create an account and you're taken to
-the home page, where you can **Play ranked**, create or join a **private room**, or practice. **Practice problems** opens the problem list; each problem has an editor where you
-can run the samples and submit. The dev dashboard at <http://localhost:5173/dev/status> shows the
+the home page, where you can **Play ranked**, create or join a **private room**, or practice.
+The navbar links to Practice, the Leaderboard and your profile. See [Pages](#pages). The dev dashboard at <http://localhost:5173/dev/status> shows the
 API, database, judge, session and socket state (the socket only connects while you're logged in).
 
 Generate secrets with `openssl rand -hex 24` (DB passwords) and `openssl rand -hex 64`
@@ -228,6 +229,15 @@ The server test suite (Vitest + supertest + socket.io-client) has three layers:
 - **API tests**: auth, sockets, problems and practice. They check that hidden test data never
   appears in any response, even when user code prints stdin, dumps its memory or escapes the JS
   `vm`. They also cover the run/submit rate limit and saved submissions.
+- **Stats tests** (`test/stats.test.js`, `test/matchDetails.test.js`): leaderboard order, tie
+  ranks, exclusions, pagination and your off-page rank. Profile stats (win rate, streaks, best ELO,
+  favorite language, solved by difficulty with duplicates, private matches excluded), the ELO
+  history, and match history. An N+1 check counts SQL queries for 3 vs 30 matches. Match details:
+  code hidden from non-participants, 403 while a match isn't finished, visible to participants
+  after it, and no hidden test data anywhere.
+- **Seed tests** (`test/seed.test.js`, real go-judge): all 16 problem definitions are valid, every
+  reference solution passes in both languages, and a naive O(n²) solution times out on at least
+  one hidden test of each HARD problem.
 - **Duel integration tests** (`test/match/duel.integration.test.js`): two real socket.io-client
   connections against the real server, MySQL and go-judge. Covers a full ranked match with ELO in
   the DB, a private room with rematch, rejoin after a disconnect, the disconnect loss, and a scan
@@ -341,7 +351,7 @@ Two players get the same problem; the server judges both with the same judge as 
 | One thing at a time | A user can be in only one queue, room or match, across all tabs (`ALREADY_BUSY`). Nobody can play against themselves.                                                                                                                                                                                                                              |
 | States              | `WAITING` (both players found; waiting for both clients to join, max 30 s, otherwise `CANCELLED`) → `COUNTDOWN` (3 s) → `ACTIVE` → `FINISHED` or `CANCELLED`. Persisted on the `Match` row with `mode`, `endReason`, timings, ELO before/after and best progress.                                                                                  |
 | Duration            | EASY 10 min, MEDIUM 15 min, HARD 20 min. **The server owns every timer**; clients only display `endsAt` (corrected for clock skew with `serverNow`).                                                                                                                                                                                               |
-| Problem             | Avoids problems either player saw in their last 5 matches when possible. Ranked difficulty from the average ELO: < 1100 EASY, < 1300 EASY or MEDIUM, otherwise MEDIUM or HARD (falls back to any difficulty if none exist). Private: the host picks EASY / MEDIUM / HARD / ANY.                                                                    |
+| Problem             | Avoids problems either player saw in their last 5 matches when possible. Ranked difficulty from the average ELO: < 1100 EASY, < 1300 EASY or MEDIUM, otherwise MEDIUM or HARD. If a band ever has no problems, any difficulty is used. Private: the host picks EASY / MEDIUM / HARD / ANY (a difficulty with no problems is rejected).             |
 | Languages           | Each player picks JavaScript or Python and can switch at any time.                                                                                                                                                                                                                                                                                 |
 | Run / submit        | `match:run` judges the samples only (no effect on progress). `match:submit` judges everything (samples and hidden in separate executions), counts an attempt, and is saved as a `Submission` with `matchId`. Together: 1 request per 3 s per player.                                                                                               |
 | Winning             | First to pass **all** tests wins immediately (`SOLVED`). On **timeout**: most tests passed wins; if equal, whoever reached that count first; if both have 0, a draw (`TIMEOUT`). **Forfeit**: the other player wins (`FORFEIT`). **Disconnect**: 30 s grace to reconnect while the match keeps running, then the other player wins (`DISCONNECT`). |
@@ -428,6 +438,70 @@ integration test scans all of them).
 6. **Reconnect:** refresh a window during a match: timer, progress and code come back. Close a
    window for more than 30 s to lose by disconnect.
 
+## Leaderboard, profiles and match details
+
+### Pages
+
+| Route                          | What it shows                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `/`                            | Play: ranked queue, private rooms, join by code, your ELO and W/L/D                                                       |
+| `/problems`, `/practice/:slug` | Problem list and the practice editor                                                                                      |
+| `/leaderboard`                 | Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row when you're on another page |
+| `/u/:username`                 | Public profile: stats, ELO history chart (hover for date + ELO), solved by difficulty, match history with a mode filter   |
+| `/matches/:id`                 | Match details: summary, side-by-side submission timeline, and both final codes (participants only, after the match)       |
+| `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px it uses Problem / Editor / Results tabs.                            |
+| `/join/:code`                  | Invite link to a private room                                                                                             |
+| anything else                  | 404 page (also for unknown players and matches)                                                                           |
+
+Every logged-in page except the arena has the navbar (Play, Practice, Leaderboard, My profile,
+your ELO, Log out; a menu button on phones). Usernames link to profiles everywhere. All pages
+work down to 375 px with no horizontal scrolling.
+
+### Endpoints
+
+All require the session cookie.
+
+| Method | Path                                                                  | Returns                                                                                                                                                                                                                                                                                 |
+| ------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/leaderboard?page=&limit=`                                       | `{ page, limit, total, totalPages, entries: [{ rank, userId, username, elo, wins, losses, draws, gamesPlayed, winRate }], me }`. `limit` ≤ 50 (default 20). `me` is your row (with `onPage`), or `null` if you haven't played ranked.                                                   |
+| GET    | `/api/users/:username/profile`                                        | `{ profile: { username, elo, rank, bestElo, wins, losses, draws, gamesPlayed, winRate, currentStreak, longestWinStreak, favoriteLanguage, solved: { EASY, MEDIUM, HARD, total }, memberSince } }`                                                                                       |
+| GET    | `/api/users/:username/elo-history`                                    | `{ username, points: [{ matchId, date, elo, delta }] }`: starts at 1000 (account creation), then one point per finished ranked match                                                                                                                                                    |
+| GET    | `/api/users/:username/matches?page=&limit=&mode=all\|ranked\|private` | `{ page, limit, total, totalPages, matches: [{ id, mode, result, endReason, opponent: { username, elo }, problem: { title, slug, difficulty }, languages, passed, total, solveTimeMs, eloChange, date }] }`, finished matches, newest first                                             |
+| GET    | `/api/matches/:id`                                                    | `{ match: { mode, status, endReason, winnerId, problem, durationMs, players: [{ username, eloBefore, eloChange, eloAfter, passed, result, solveTimeMs }], timeline: [{ userId, offsetMs, language, status, passed, total }], code: { available, reason } } }`. **Never contains code.** |
+| GET    | `/api/matches/:id/code`                                               | `{ players: [{ userId, submission: { language, code, status, passed, total, createdAt } \| null }] }`: each player's **last** submission                                                                                                                                                |
+
+Definitions:
+
+- **Ranked stats only:** the leaderboard lists users with at least one ranked game. W/L/D, win rate
+  (`wins / games × 100`, 1 decimal), streaks, best ELO and the ELO history only count finished
+  **ranked** matches. Private matches still appear in the match history.
+- **Order and ties:** ELO desc, then wins desc, then oldest account. Equal ELO shares a rank
+  (`RANK()`: 1, 1, 3).
+- **Streaks:** the current streak is the run of identical W or L results ending with the latest
+  match (a draw ends it); the longest win streak is the longest run of wins.
+- **Favorite language:** the language with the most submissions (practice and matches).
+- **Solved:** distinct problems with at least one accepted submission (practice or match), by
+  difficulty.
+
+### Who can see match code
+
+| Viewer                                                                | Summary + timeline | Final code (`/api/matches/:id/code`) |
+| --------------------------------------------------------------------- | ------------------ | ------------------------------------ |
+| A participant, match `FINISHED`                                       | ✅                 | ✅ both players' last submissions    |
+| A participant, match `WAITING` / `COUNTDOWN` / `ACTIVE` / `CANCELLED` | ✅                 | ❌ `403 MATCH_NOT_FINISHED`          |
+| Anyone else                                                           | ✅                 | ❌ `403 NOT_A_PARTICIPANT`           |
+
+An opponent's code is never visible while a match is still running. The timeline only has times,
+languages, statuses and counts. Neither endpoint contains any test data.
+
+### Performance
+
+- Indexes (migration `20261119150000_profiles_leaderboard_indexes`): `User(elo DESC, wins DESC,
+createdAt)` for the leaderboard; `Match(player1Id, endedAt)` and `Match(player2Id, endedAt)` for
+  history; `Submission(matchId, userId, createdAt)` for timelines and last submissions.
+- Each endpoint runs a **fixed number of queries**, whatever the number of matches. The test
+  suite counts them through Prisma query events.
+
 ## Problems & practice API
 
 All endpoints require the session cookie.
@@ -452,15 +526,21 @@ All endpoints require the session cookie.
 1. Create `server/prisma/seed/problems/<slug>.js` (copy an existing one) with `slug`, `title`,
    `difficulty`, `timeLimitMs` (per test), `functionName: { javascript, python }`,
    `starterCode: { javascript, python }`, a markdown `description`, and `tests`:
-   `[{ input: [...args], expected, hidden? }]`. Put **at least 2 sample tests first** (no
-   `hidden`), then **at least 6 hidden tests**, including edge cases.
+   `[{ input: [...args], expected, hidden? }]`. Put **exactly 2 sample tests first** (no
+   `hidden`), then **at least 8 hidden tests**, including edge cases (the 8 original problems
+   have at least 6). HARD problems need large inputs (e.g. n = 10⁵) where O(n²) can't finish.
    - Write expected values by hand, or compute generated cases with a simple, independent oracle
      (e.g. brute force) in the problem file, **never** with the reference solution.
+   - For inputs too large for brute force, use an efficient oracle based on a **different
+     algorithm** than the reference, and cross-check it against brute force on small random
+     inputs with `crossCheck()` from `../oracleCheck.js` (runs every time the seed loads).
    - Use a seeded PRNG (`../random.js`) so generated tests are stable.
    - Pick problems with a single correct answer, or specify an order (e.g. "indices in increasing
      order"): outputs are compared exactly (floats within 1e-6).
 2. Add reference solutions: `server/prisma/seed/solutions/<slug>.js` and `<slug>.py`.
-3. Register the problem in `server/prisma/seed/problems/index.js`.
+3. Register the problem in `server/prisma/seed/problems/index.js`. For a HARD problem, also add
+   a naive O(n²) JavaScript solution to `server/prisma/seed/naive/<slug>.js` and its slug to
+   `HARD_SLUGS`: `test/seed.test.js` checks it times out on at least one hidden test.
 4. Run `npm run db:seed`. It validates the definition and runs both reference solutions through
    go-judge against every test. If anything fails, it prints the failing test and writes nothing.
 
@@ -472,12 +552,14 @@ code-duel/
 │   ├── index.html
 │   ├── vite.config.js         # Tailwind plugin, @ → src alias, /api + /socket.io proxy
 │   └── src/
-│       ├── components/        # ProtectedRoute, GuestRoute, badges, form + UI components
+│       ├── components/        # route guards, badges, UserLink, Modal, Pagination, form + UI components
+│       │   ├── layout/        # AppLayout + Navbar
 │       │   ├── practice/      # CodeEditor (Monaco), ResultsPanel, ProblemStatement, LanguageSelect
-│       │   └── match/         # timer, player progress, countdown, result modal
+│       │   ├── match/         # timer, player progress, countdown, result modal
+│       │   └── profile/       # EloChart (hand-written SVG)
 │       ├── hooks/             # useApiForm, useHealth, useSocketLifecycle, usePlaySession, …
 │       ├── lib/               # api, socket, monaco (self-hosted), markdown, storage, verdicts
-│       ├── pages/             # Home, Login, Register, Problems, Practice, Match (lazy), Join, Status
+│       ├── pages/             # Home, Problems, Practice, Leaderboard, Profile, MatchDetails, Match, Join, 404, …
 │       ├── store/             # authStore, connectionStore, playStore (Zustand)
 │       ├── App.jsx            # routes
 │       ├── index.css          # Tailwind entry
@@ -486,17 +568,17 @@ code-duel/
 │   ├── prisma/
 │   │   ├── schema.prisma      # User, Problem, TestCase, Match, Submission
 │   │   ├── migrations/
-│   │   └── seed/              # npm run db:seed: problems/, solutions/ (reference), index.js
+│   │   └── seed/              # npm run db:seed: problems/, solutions/ (reference), naive/, verify.js
 │   ├── prisma.config.js       # Prisma 7 config (schema path, DATABASE_URL)
 │   ├── vitest.config.js
-│   ├── test/                  # API, judge and match tests; setup (test DB, cleanup, go-judge check)
+│   ├── test/                  # API, judge, match, stats and seed tests; setup (test DB, go-judge check)
 │   └── src/
 │       ├── config/env.js      # Zod-validated env
 │       ├── controllers/
-│       ├── routes/            # /api/health, /api/auth, /api/problems, /api/practice
+│       ├── routes/            # /api/health, auth, problems, practice, leaderboard, users, matches
 │       ├── middleware/        # errorHandler, notFound, requireAuth, rateLimit, validate
 │       ├── socket/            # Socket.io setup, cookie auth, handlers/ (queue, room, match)
-│       ├── services/          # auth, problem, practice, elo
+│       ├── services/          # auth, problem, practice, elo, leaderboard, profile, matchDetails
 │       │   ├── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
 │       │   └── match/         # MatchManager, matchmaker, problemPicker, roomCodes, matchRepository
 │       ├── validators/        # Zod request schemas

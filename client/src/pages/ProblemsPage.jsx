@@ -42,7 +42,7 @@ export default function ProblemsPage() {
   const solvedCount = problems?.filter((p) => p.solved).length ?? 0;
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 px-4 py-12">
+    <main className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8 sm:py-12">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-1">
           <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-300">

@@ -24,7 +24,7 @@ export default function JoinRoomPage() {
   }, [code]);
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+    <main className="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-24 text-center">
       {error ? (
         <>
           <p className="text-lg font-semibold">

@@ -9,5 +9,6 @@ const adapter = new PrismaMariaDb(env.DATABASE_URL);
 export const prisma = new PrismaClient({
   adapter,
   // Query errors are thrown to the caller (and logged by errorHandler when they are 500s).
-  log: ['warn'],
+  // In tests, queries are also emitted as events so tests can count them (N+1 checks).
+  log: env.NODE_ENV === 'test' ? [{ emit: 'event', level: 'query' }, 'warn'] : ['warn'],
 });

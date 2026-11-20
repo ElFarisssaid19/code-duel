@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import Button from '@/components/Button.jsx';
 import FullPageSpinner from '@/components/FullPageSpinner.jsx';
+import Logo from '@/components/Logo.jsx';
 import Modal from '@/components/Modal.jsx';
 import ToastStack from '@/components/ToastStack.jsx';
 import Countdown from '@/components/match/Countdown.jsx';
@@ -18,10 +19,16 @@ import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { useToasts } from '@/hooks/useToasts.js';
 import { request, socket } from '@/lib/socket.js';
 import { loadItem, saveItem } from '@/lib/storage.js';
+import { useAuthStore } from '@/store/authStore.js';
 
 const FILE_EXTENSIONS = { javascript: 'js', python: 'py' };
 const ACTIVITY_PING_MS = 1500;
 const TYPING_VISIBLE_MS = 2500;
+const PANES = [
+  { id: 'problem', label: 'Problem' },
+  { id: 'editor', label: 'Editor' },
+  { id: 'results', label: 'Results' },
+];
 const codeKey = (matchId, language) => `code-duel:match:${matchId}:code:${language}`;
 const languageKey = (matchId) => `code-duel:match:${matchId}:language`;
 
@@ -79,6 +86,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
+  const [pane, setPane] = useState('problem'); // small screens only: one pane at a time
   const runningRef = useRef(false);
   const lastPing = useRef(0);
 
@@ -103,6 +111,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
       runningRef.current = true;
       setRunning(mode);
       setError(null);
+      setPane('results');
       try {
         const data = await request(mode === 'run' ? 'match:run' : 'match:submit', {
           language,
@@ -131,34 +140,60 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
   const params = paramNames(problem.starterCode[language]);
 
   return (
-    <div className="flex flex-col lg:h-screen">
-      <header className="border-b border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="flex items-center gap-4">
-          <PlayerProgress player={me} label="you" />
-          <div className="flex shrink-0 flex-col items-center px-2">
+    <div className="flex min-h-dvh flex-col lg:h-dvh">
+      <header className="border-b border-zinc-800 bg-zinc-950 px-4 pt-2 pb-3">
+        {/* Focus mode: no navbar, just a minimal header */}
+        <div className="mb-2 flex items-center justify-between">
+          <Logo className="text-sm" />
+          <span className="text-[0.7rem] tracking-wide text-zinc-500 uppercase">
+            {state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel'}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 items-center gap-x-4 gap-y-2 lg:flex lg:gap-4">
+          <div className="col-span-2 flex justify-center lg:order-2 lg:col-span-1 lg:shrink-0 lg:px-2">
             <MatchTimer endsAt={state.endsAt} now={now} offsetMs={offsetMs} stopped={!live} />
-            <span className="text-[0.7rem] tracking-wide text-zinc-500 uppercase">
-              {state.mode === 'RANKED' ? 'Ranked' : 'Private'}
-            </span>
           </div>
+          <PlayerProgress player={me} label="you" className="lg:order-1" />
           <PlayerProgress
             player={opponent}
             align="right"
             accent="sky"
             typing={live && now < typingUntil}
+            className="lg:order-3"
           />
         </div>
       </header>
 
+      <div className="flex border-b border-zinc-800 lg:hidden" role="tablist" aria-label="Arena">
+        {PANES.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            role="tab"
+            aria-selected={pane === p.id}
+            onClick={() => setPane(p.id)}
+            className={`flex-1 border-b-2 px-3 py-2.5 text-sm font-medium transition ${
+              pane === p.id ? 'border-emerald-400 text-zinc-50' : 'border-transparent text-zinc-400'
+            }`}
+          >
+            {p.label}
+            {p.id === 'results' && running && <span className="ml-1.5 animate-pulse">•</span>}
+          </button>
+        ))}
+      </div>
+
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <section
-          className="min-h-0 min-w-0 overflow-y-auto border-zinc-800 lg:border-r"
+          className={`min-h-0 min-w-0 overflow-y-auto border-zinc-800 lg:block lg:border-r ${pane === 'problem' ? '' : 'hidden'}`}
           aria-label="Problem"
         >
           <ProblemStatement problem={problem} params={params} />
         </section>
 
-        <section className="flex min-h-0 min-w-0 flex-col" aria-label="Editor and results">
+        <section
+          className={`min-h-0 min-w-0 flex-col lg:flex ${pane === 'problem' ? 'hidden' : 'flex'}`}
+          aria-label="Editor and results"
+        >
           <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-4 py-2.5">
             <LanguageSelect
               value={language}
@@ -193,7 +228,9 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
               </Button>
             </div>
           </div>
-          <div className="h-[420px] min-h-0 border-b border-zinc-800 lg:h-auto lg:flex-[3]">
+          <div
+            className={`h-[60dvh] min-h-0 border-b border-zinc-800 lg:block lg:h-auto lg:flex-[3] ${pane === 'editor' ? '' : 'hidden'}`}
+          >
             <CodeEditor
               path={`match-${matchId}/solution.${FILE_EXTENSIONS[language]}`}
               language={language}
@@ -203,7 +240,10 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
               onSubmit={submit}
             />
           </div>
-          <div className="min-h-[220px] overflow-y-auto p-4 lg:flex-[2]" aria-live="polite">
+          <div
+            className={`min-h-[220px] overflow-y-auto p-4 lg:block lg:flex-[2] ${pane === 'results' ? '' : 'hidden'}`}
+            aria-live="polite"
+          >
             <ResultsPanel
               result={result}
               running={running}
@@ -278,7 +318,11 @@ function MatchSession({ matchId }) {
           connected ? 'default' : 'warning',
         );
       },
-      'match:end': (result) => result.matchId === matchId && dispatch({ type: 'end', result }),
+      'match:end': (result) => {
+        if (result.matchId !== matchId) return;
+        dispatch({ type: 'end', result });
+        useAuthStore.getState().fetchMe(); // new ELO for the navbar badge
+      },
       'rematch:update': (rematch) =>
         rematch.matchId === matchId && dispatch({ type: 'rematch', rematch }),
     };

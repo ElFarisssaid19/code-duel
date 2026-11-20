@@ -47,7 +47,7 @@ export default defineConfig([
 
   // Reference solutions are user-style scripts: they define the function the judge harness calls.
   {
-    files: ['server/prisma/seed/solutions/**/*.js'],
+    files: ['server/prisma/seed/solutions/**/*.js', 'server/prisma/seed/naive/**/*.js'],
     languageOptions: { sourceType: 'script' },
     rules: { 'no-unused-vars': 'off' },
   },

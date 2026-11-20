@@ -88,7 +88,7 @@ function Workspace({ problem }) {
   useRunShortcuts(run, submit);
 
   return (
-    <div className="flex flex-col lg:h-screen">
+    <div className="flex flex-col lg:h-[calc(100dvh-3.5rem)]">
       <header className="flex flex-wrap items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3">
         <Link to="/problems" className="text-sm text-zinc-400 hover:text-zinc-200">
           ← Problems
@@ -179,7 +179,7 @@ export default function PracticePage() {
   if (state.slug !== slug) return <FullPageSpinner />;
   if (state.error) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4 text-center">
+      <main className="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-24 text-center">
         <p className="text-lg font-semibold">
           {state.error.status === 404 ? 'Problem not found' : state.error.message}
         </p>

@@ -1,5 +1,7 @@
+import { Link } from 'react-router';
 import Button from '@/components/Button.jsx';
 import Modal from '@/components/Modal.jsx';
+import UserLink from '@/components/UserLink.jsx';
 import { formatClock } from '@/components/match/format.js';
 
 function headline(result, meId) {
@@ -109,7 +111,7 @@ export default function ResultModal({
             {result.summary.players.map((p) => (
               <tr key={p.userId} className={p.userId === meId ? 'text-zinc-100' : 'text-zinc-300'}>
                 <td className="py-2 font-medium">
-                  {p.username}
+                  <UserLink username={p.username} />
                   {p.userId === result.winnerId && (
                     <span className="ml-1.5 text-emerald-400">★</span>
                   )}
@@ -128,7 +130,15 @@ export default function ResultModal({
 
         {rematchError && <p className="text-sm text-red-300">{rematchError}</p>}
 
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {result.reason !== 'CANCELLED' && (
+            <Link
+              to={`/matches/${result.matchId}`}
+              className="mr-auto text-sm font-medium text-emerald-400 hover:text-emerald-300"
+            >
+              View match details →
+            </Link>
+          )}
           {canRematch && (
             <RematchButton rematch={rematch} meId={meId} onRematch={onRematch} busy={rematchBusy} />
           )}

@@ -5,79 +5,10 @@
  * the real judge against ALL of its problem's tests. If any fails, nothing is written.
  * Requires the infra to be up (MySQL + go-judge: `npm run infra:up`).
  */
-import { readFile } from 'node:fs/promises';
 import { prisma } from '../../src/lib/prisma.js';
-import {
-  judgeHealth,
-  judgeSolution,
-  LANGUAGE_IDS,
-  STATUS,
-} from '../../src/services/judge/index.js';
+import { judgeHealth } from '../../src/services/judge/index.js';
 import problems from './problems/index.js';
-
-const SOLUTION_EXTENSIONS = { javascript: 'js', python: 'py' };
-const MIN_SAMPLES = 2;
-const MIN_HIDDEN = 6;
-
-/** Structural checks so a malformed problem fails loudly instead of seeding bad data. */
-function validateProblem(problem) {
-  const errors = [];
-  const samples = problem.tests.filter((t) => !t.hidden);
-  const hidden = problem.tests.filter((t) => t.hidden);
-  if (samples.length < MIN_SAMPLES) errors.push(`needs at least ${MIN_SAMPLES} sample tests`);
-  if (hidden.length < MIN_HIDDEN) errors.push(`needs at least ${MIN_HIDDEN} hidden tests`);
-  if (problem.tests.findIndex((t) => t.hidden) < samples.length) {
-    errors.push('sample tests must come before hidden tests');
-  }
-  for (const language of LANGUAGE_IDS) {
-    if (!problem.functionName?.[language]) errors.push(`missing functionName.${language}`);
-    if (!problem.starterCode?.[language]) errors.push(`missing starterCode.${language}`);
-  }
-  problem.tests.forEach((t, i) => {
-    if (!Array.isArray(t.input)) errors.push(`test ${i}: input must be an array of arguments`);
-    if (t.expected === undefined || t.expected === null) errors.push(`test ${i}: missing expected`);
-  });
-  return errors;
-}
-
-async function verifyReferenceSolutions(problem) {
-  const failures = [];
-  for (const language of LANGUAGE_IDS) {
-    const file = new URL(
-      `./solutions/${problem.slug}.${SOLUTION_EXTENSIONS[language]}`,
-      import.meta.url,
-    );
-    const code = await readFile(file, 'utf8').catch(() => null);
-    if (code === null) {
-      failures.push(`${language}: missing reference solution ${file.pathname}`);
-      continue;
-    }
-
-    const verdict = await judgeSolution({
-      language,
-      code,
-      functionName: problem.functionName[language],
-      timeLimitMs: problem.timeLimitMs,
-      tests: problem.tests.map((t) => ({ input: t.input, expected: t.expected })),
-    });
-    const status = `${verdict.status} ${verdict.passed}/${verdict.total}`;
-    console.log(`  ${language.padEnd(10)} ${status.padEnd(28)} ${verdict.timeMs} ms`);
-
-    if (verdict.status !== STATUS.ACCEPTED) {
-      const failed = verdict.tests.find((t) => t.status !== STATUS.ACCEPTED);
-      const detail = verdict.compileError
-        ? verdict.compileError
-        : `test #${failed.index}: ${failed.status}` +
-          (failed.error ? `\n${failed.error}` : '') +
-          (failed.status === STATUS.WRONG_ANSWER
-            ? `\nexpected ${JSON.stringify(failed.expected).slice(0, 300)}` +
-              `\nactual   ${JSON.stringify(failed.actual).slice(0, 300)}`
-            : '');
-      failures.push(`${language}: ${status}\n${detail}`);
-    }
-  }
-  return failures;
-}
+import { validateProblem, verifyReferenceSolutions } from './verify.js';
 
 async function upsertProblem(problem) {
   const data = {

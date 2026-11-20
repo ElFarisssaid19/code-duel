@@ -1,18 +1,25 @@
-/** Username, ELO, progress bar and attempts for one player. */
+import UserLink from '@/components/UserLink.jsx';
+
+/** Username (links to the profile in a new tab), ELO, progress bar and attempts for one player. */
 export default function PlayerProgress({
   player,
   label,
   align = 'left',
   typing = false,
   accent = 'emerald',
+  className = '',
 }) {
   const percent = player.total ? Math.round((player.passed / player.total) * 100) : 0;
   const bar = accent === 'emerald' ? 'bg-emerald-500' : 'bg-sky-500';
   const right = align === 'right';
   return (
-    <div className={`min-w-0 flex-1 space-y-1.5 ${right ? 'text-right' : ''}`}>
+    <div className={`min-w-0 flex-1 space-y-1.5 ${right ? 'text-right' : ''} ${className}`}>
       <div className={`flex items-baseline gap-2 ${right ? 'flex-row-reverse' : ''}`}>
-        <span className="truncate font-semibold text-zinc-100">{player.username}</span>
+        <UserLink
+          username={player.username}
+          newTab
+          className="truncate font-semibold text-zinc-100"
+        />
         <span className="font-mono text-xs text-zinc-500">{player.elo}</span>
         {label && <span className="text-xs text-zinc-500">{label}</span>}
         {player.connected === false && (

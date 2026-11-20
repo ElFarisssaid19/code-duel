@@ -69,6 +69,9 @@ model User {
   matchesAsPlayer2 Match[]      @relation("MatchPlayer2")
   matchesWon       Match[]      @relation("MatchWinner")
   submissions      Submission[]
+
+  /// Leaderboard order: elo desc, wins desc, oldest account first
+  @@index([elo(sort: Desc), wins(sort: Desc), createdAt])
 }
 
 model Problem {
@@ -149,6 +152,9 @@ model Match {
 
   @@index([player1Id, createdAt])
   @@index([player2Id, createdAt])
+  /// Match history (finished matches by end date)
+  @@index([player1Id, endedAt])
+  @@index([player2Id, endedAt])
   @@index([problemId])
   @@index([winnerId])
   @@index([status])
@@ -174,6 +180,8 @@ model Submission {
   problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
 
   @@index([matchId])
+  /// Match timeline and each player's last submission
+  @@index([matchId, userId, createdAt])
   @@index([userId, problemId])
   @@index([problemId])
 }
