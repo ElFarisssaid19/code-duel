@@ -8,10 +8,18 @@
  */
 import { ratingSelect, ratingsByCategory } from './ratings.js';
 
-export const PUBLIC_USER_FIELDS = ['id', 'username', 'email', 'preferredLanguage', 'createdAt'];
+export const PUBLIC_USER_FIELDS = [
+  'id',
+  'username',
+  'email',
+  'preferredLanguage',
+  'allowGhosts',
+  'createdAt',
+];
 
 export const publicUserSelect = {
   ...Object.fromEntries(PUBLIC_USER_FIELDS.map((f) => [f, true])),
+  ghostNoticeDismissedAt: true,
   ratings: { select: ratingSelect },
 };
 
@@ -20,6 +28,9 @@ export function toPublicUser(user) {
   const { elo, wins, losses, draws } = ratings.ALGO;
   return {
     ...Object.fromEntries(PUBLIC_USER_FIELDS.map((f) => [f, user[f]])),
+    allowGhosts: Boolean(user.allowGhosts), // raw SQL returns 1/0
+    // Whether the one-time "your runs may be replayed as ghosts" banner was dismissed.
+    ghostNoticeDismissed: Boolean(user.ghostNoticeDismissedAt),
     elo,
     wins,
     losses,

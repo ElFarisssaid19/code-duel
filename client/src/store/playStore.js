@@ -19,6 +19,7 @@ export const usePlayStore = create((set) => ({
               window: presence.window,
               category: presence.category ?? 'ALGO',
               track: presence.track ?? null,
+              ghostOffer: Boolean(presence.ghostOffer),
             }
           : null,
       room: presence.type === 'room' ? presence.room : null,

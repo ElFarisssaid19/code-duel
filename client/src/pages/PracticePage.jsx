@@ -7,6 +7,7 @@ import Modal from '@/components/ui/Modal.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import CodeEditor from '@/components/practice/CodeEditor.jsx';
 import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
+import LinesChanged from '@/components/practice/LinesChanged.jsx';
 import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
 import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
 import { paramNames } from '@/components/practice/params.js';
@@ -38,7 +39,9 @@ function Workspace({ problem }) {
   );
   const [running, setRunning] = useState(null); // null | 'run' | 'submit'
   const [result, setResult] = useState(null);
+  const [resultLines, setResultLines] = useState(null);
   const [error, setError] = useState(null);
+  const debug = problem.category === 'DEBUG';
   const [activeTab, setActiveTab] = useState(0);
   const runningRef = useRef(false);
 
@@ -70,6 +73,7 @@ function Workspace({ problem }) {
       try {
         const data = await api.post(`/practice/${slug}/${mode}`, { language, code });
         setResult(data.result);
+        setResultLines(data.linesChanged ?? null);
         // Open the first failing test (or the first one).
         setActiveTab(
           Math.max(
@@ -94,19 +98,23 @@ function Workspace({ problem }) {
   return (
     <div className="flex flex-col lg:h-[calc(100dvh-3.5rem)]">
       <header className="flex flex-wrap items-center gap-3 border-b border-line bg-canvas/90 px-4 py-3">
-        <Link to="/problems" className="rounded text-sm text-ink-muted hover:text-ink">
+        <Link
+          to={debug ? '/problems?category=DEBUG' : '/problems'}
+          className="rounded text-sm text-ink-muted hover:text-ink"
+        >
           ← Problems
         </Link>
         <span className="hidden truncate text-sm font-medium text-zinc-200 sm:inline">
           {problem.title}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {debug && <LinesChanged original={problem.starterCode[language]} code={code} />}
           <LanguageSelect value={language} onChange={changeLanguage} disabled={Boolean(running)} />
           <Button
             variant="secondary"
             onClick={() => setConfirmReset(true)}
             disabled={Boolean(running)}
-            title="Reset to starter code"
+            title={debug ? 'Reset to the buggy code' : 'Reset to starter code'}
           >
             Reset
           </Button>
@@ -157,6 +165,7 @@ function Workspace({ problem }) {
               activeTab={activeTab}
               onTabChange={setActiveTab}
               params={params}
+              linesChanged={resultLines}
             />
           </div>
         </section>
@@ -170,7 +179,7 @@ function Workspace({ problem }) {
       >
         <p className="text-sm text-zinc-300">
           Your current {language === 'python' ? 'Python' : 'JavaScript'} code for this problem will
-          be replaced by the starter code.
+          be replaced by the {debug ? 'original buggy code' : 'starter code'}.
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setConfirmReset(false)} data-autofocus>

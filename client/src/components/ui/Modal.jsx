@@ -15,6 +15,7 @@ export default function Modal({
   children,
   onClose,
   tone = 'default',
+  size = 'md',
   className = '',
 }) {
   const titleId = useId();
@@ -85,7 +86,7 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`w-full max-w-md rounded-2xl border bg-surface p-6 shadow-2xl shadow-black/60 outline-none motion-safe:animate-pop-in ${border} ${className}`}
+        className={`w-full ${size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-2xl border bg-surface p-6 shadow-2xl shadow-black/60 outline-none motion-safe:animate-pop-in ${border} ${className}`}
       >
         <h2 id={titleId} className="text-xl font-bold tracking-tight">
           {title}

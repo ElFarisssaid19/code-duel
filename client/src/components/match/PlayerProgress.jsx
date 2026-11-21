@@ -1,5 +1,6 @@
 import UserLink from '@/components/UserLink.jsx';
-import { formatScore } from '@/lib/categories.js';
+import GhostName from '@/components/match/GhostName.jsx';
+import { formatScore, linesLabel } from '@/lib/categories.js';
 
 /**
  * Username (links to the profile in a new tab), ELO, progress bar and attempts for one player.
@@ -24,14 +25,19 @@ export default function PlayerProgress({
   return (
     <div className={`min-w-0 flex-1 space-y-1.5 ${right ? 'text-right' : ''} ${className}`}>
       <div className={`flex items-baseline gap-2 ${right ? 'flex-row-reverse' : ''}`}>
-        <UserLink
-          username={player.username}
-          newTab
-          className="truncate font-semibold text-zinc-100"
-        />
+        {player.ghost ? (
+          <GhostName ghost={player.ghost} className="text-zinc-100" />
+        ) : (
+          <UserLink
+            username={player.username}
+            newTab
+            className="truncate font-semibold text-zinc-100"
+          />
+        )}
         <span className="font-mono text-xs text-zinc-500">{player.elo}</span>
         {label && <span className="text-xs text-zinc-500">{label}</span>}
-        {player.connected === false && (
+        {/* A replay has no connection state: never "offline", never "typing". */}
+        {!player.ghost && player.connected === false && (
           <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[0.7rem] font-medium text-red-300">
             offline
           </span>
@@ -67,7 +73,12 @@ export default function PlayerProgress({
         <span>
           {player.attempts} attempt{player.attempts === 1 ? '' : 's'}
         </span>
-        {typing && <span className="animate-pulse text-sky-300">typing…</span>}
+        {player.linesChanged !== undefined && player.linesChanged !== null && (
+          <span className="font-mono" data-testid="player-lines">
+            {linesLabel(player.linesChanged)} changed
+          </span>
+        )}
+        {typing && !player.ghost && <span className="animate-pulse text-sky-300">typing…</span>}
       </div>
     </div>
   );

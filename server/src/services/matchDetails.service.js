@@ -10,6 +10,7 @@
 import { HttpError } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
 import { applyTrackRules } from './frontend/trackRules.js';
+import { archivedGhost, GHOST_PLAYER_ID } from './match/ghosts.js';
 import { renderPage } from './renderer/index.js';
 
 const notFound = () => new HttpError(404, 'NOT_FOUND', 'Match not found');
@@ -33,6 +34,8 @@ export async function getMatchDetails(matchId, viewerId) {
     include: {
       player1: { select: { id: true, username: true } },
       player2: { select: { id: true, username: true } },
+      ghostUser: { select: { id: true, username: true } },
+      ghostSourceMatch: { select: { endedAt: true } },
       problem: {
         select: {
           title: true,
@@ -54,17 +57,22 @@ export async function getMatchDetails(matchId, viewerId) {
           total: true,
           score: true,
           charCount: true,
+          linesChanged: true,
           createdAt: true,
         },
       },
     },
   });
   if (!match) throw notFound();
+  const debug = match.category === 'DEBUG';
+  // GHOST matches: the opponent is a replay or a bot, never a participant.
+  const ghostSide = match.mode === 'GHOST' ? archivedGhost(match) : null;
+  const winnerId = match.winnerIsGhost ? GHOST_PLAYER_ID : match.winnerId;
   const frontend = match.category === 'FRONTEND';
   const { track, canvasWidth, canvasHeight, ...problem } = match.problem;
 
   const player = (n) => {
-    const user = match[`player${n}`];
+    const user = match[`player${n}`] ?? ghostSide;
     const passed = match[`player${n}Passed`];
     const reachedAt = match[`player${n}ReachedAt`];
     const eloChange = match[`player${n}EloChange`];
@@ -78,9 +86,9 @@ export async function getMatchDetails(matchId, viewerId) {
       result:
         match.status !== 'FINISHED'
           ? null
-          : match.winnerId === null
+          : winnerId === null
             ? 'D'
-            : match.winnerId === user.id
+            : winnerId === user.id
               ? 'W'
               : 'L',
       solveTimeMs:
@@ -91,6 +99,8 @@ export async function getMatchDetails(matchId, viewerId) {
         score: match[`player${n}Score`] === null ? 0 : Number(match[`player${n}Score`]),
         charCount: match[`player${n}Chars`],
       }),
+      ...(debug && { linesChanged: match[`player${n}Lines`] }),
+      ...(user.ghost && { ghost: user.ghost }),
     };
   };
   const access = codeAccess(match, viewerId);
@@ -106,15 +116,20 @@ export async function getMatchDetails(matchId, viewerId) {
       previews: {
         available: finished,
         reason: finished ? null : 'MATCH_NOT_FINISHED',
-        players: [match.player1Id, match.player2Id].map((userId) => ({
+        players: [match.player1Id, match.player2Id ?? GHOST_PLAYER_ID].map((userId) => ({
           userId,
-          url: finished ? `/api/matches/${match.id}/preview/${userId}.png` : null,
+          // A ghost/bot has no submission in this match: no preview.
+          url:
+            finished && userId !== GHOST_PLAYER_ID
+              ? `/api/matches/${match.id}/preview/${userId}.png`
+              : null,
         })),
       },
     }),
+    ...(debug && { category: match.category }),
     status: match.status,
     endReason: match.endReason,
-    winnerId: match.winnerId,
+    winnerId,
     problem,
     testCount: match.testCount,
     timeLimitMs: match.durationMs,
@@ -131,6 +146,7 @@ export async function getMatchDetails(matchId, viewerId) {
       passed: s.passed,
       total: s.total,
       ...(frontend && { score: s.score === null ? null : Number(s.score), charCount: s.charCount }),
+      ...(debug && { linesChanged: s.linesChanged }),
     })),
     code: { available: access === null, reason: access },
   };
@@ -169,11 +185,14 @@ export async function getMatchCode(matchId, viewerId) {
         charCount: true,
         createdAt: true,
       }).then((s) => s && { ...s, score: Number(s.score) });
-    const [one, two] = await Promise.all([best(match.player1Id), best(match.player2Id)]);
+    const [one, two] = await Promise.all([
+      best(match.player1Id),
+      match.player2Id === null ? null : best(match.player2Id),
+    ]);
     return {
       players: [
         { userId: match.player1Id, submission: one },
-        { userId: match.player2Id, submission: two },
+        { userId: match.player2Id ?? GHOST_PLAYER_ID, submission: two },
       ],
     };
   }
@@ -188,14 +207,19 @@ export async function getMatchCode(matchId, viewerId) {
         status: true,
         passed: true,
         total: true,
+        linesChanged: true,
         createdAt: true,
       },
     });
-  const [one, two] = await Promise.all([last(match.player1Id), last(match.player2Id)]);
+  const [one, two] = await Promise.all([
+    last(match.player1Id),
+    match.player2Id === null ? null : last(match.player2Id),
+  ]);
   return {
     players: [
       { userId: match.player1Id, submission: one },
-      { userId: match.player2Id, submission: two },
+      // GHOST matches: no code is ever replayed or shown for the ghost/bot.
+      { userId: match.player2Id ?? GHOST_PLAYER_ID, submission: two },
     ],
   };
 }

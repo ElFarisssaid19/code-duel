@@ -5,13 +5,13 @@ import { publicFrontendProblem } from './frontend/publicProblem.js';
 /**
  * Problems of a category (default ALGO) with a `solved` flag for the given user (an ACCEPTED
  * practice or match submission). FRONTEND items also have `track` and `bestScore` (the user's
- * best score, null if never submitted).
+ * best score, null if never submitted); DEBUG items have `bugCount`.
  */
 export async function listProblems(userId, { category = 'ALGO', track } = {}) {
   const [problems, solved, best] = await Promise.all([
     prisma.problem.findMany({
       where: { category, ...(track && { track }) },
-      select: { id: true, slug: true, title: true, difficulty: true, track: true },
+      select: { id: true, slug: true, title: true, difficulty: true, track: true, bugCount: true },
       orderBy: [{ difficulty: 'asc' }, { id: 'asc' }],
     }),
     prisma.submission.findMany({
@@ -29,9 +29,10 @@ export async function listProblems(userId, { category = 'ALGO', track } = {}) {
   ]);
   const solvedIds = new Set(solved.map((s) => s.problemId));
   const bestScores = new Map(best.map((b) => [b.problemId, Number(b._max.score)]));
-  return problems.map(({ track: problemTrack, ...p }) => ({
+  return problems.map(({ track: problemTrack, bugCount, ...p }) => ({
     ...p,
     solved: solvedIds.has(p.id),
+    ...(category === 'DEBUG' && { bugCount }),
     ...(category === 'FRONTEND' && {
       track: problemTrack,
       bestScore: bestScores.get(p.id) ?? null,
@@ -71,6 +72,7 @@ export async function getProblemBySlug(slug) {
       starterCode: true,
       timeLimitMs: true,
       category: true,
+      bugCount: true,
       testCases: {
         where: { isHidden: false },
         orderBy: { order: 'asc' },
@@ -87,9 +89,11 @@ export async function getProblemBySlug(slug) {
     });
     return publicFrontendProblem(full);
   }
-  const { testCases, category: _category, ...rest } = problem;
+  const { testCases, category, bugCount, ...rest } = problem;
   return {
     ...rest,
+    // DEBUG: starterCode is the buggy code; the client counts lines changed from it.
+    ...(category === 'DEBUG' && { category, bugCount }),
     samples: testCases.map((t, index) => ({ index, input: t.input, expected: t.expectedOutput })),
   };
 }

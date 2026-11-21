@@ -7,7 +7,7 @@ import ErrorState from '@/components/ui/ErrorState.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import Tabs from '@/components/ui/Tabs.jsx';
 import { useApi } from '@/hooks/useApi.js';
-import { CATEGORIES, formatScore, isCategory, TRACKS } from '@/lib/categories.js';
+import { bugsLabel, CATEGORIES, formatScore, isCategory, TRACKS } from '@/lib/categories.js';
 
 const TRACK_FILTERS = [{ id: 'ALL', label: 'All tracks' }, ...TRACKS];
 
@@ -72,7 +72,9 @@ export default function ProblemsPage() {
           <p className="text-sm text-ink-muted">
             {frontend
               ? 'Reproduce a target design with HTML and CSS, scored pixel by pixel.'
-              : 'Solve them solo, in JavaScript or Python.'}
+              : category === 'DEBUG'
+                ? 'Fix buggy code until every test passes, in JavaScript or Python.'
+                : 'Solve them solo, in JavaScript or Python.'}
           </p>
         </div>
         {problems && (
@@ -131,6 +133,11 @@ export default function ProblemsPage() {
                   </span>
                 )}
                 {problem.track && <TrackBadge track={problem.track} />}
+                {problem.bugCount !== undefined && (
+                  <span className="hidden rounded-full bg-amber-400/10 px-2 py-0.5 text-xs font-semibold text-amber-200 ring-1 ring-amber-400/30 ring-inset sm:inline">
+                    🐞 {bugsLabel(problem.bugCount)}
+                  </span>
+                )}
                 <DifficultyBadge difficulty={problem.difficulty} />
               </Link>
             </li>

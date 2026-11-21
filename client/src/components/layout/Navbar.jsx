@@ -26,6 +26,7 @@ export default function Navbar() {
   const user = useAuthStore((s) => s.user);
   const algoElo = user.ratings?.ALGO?.elo ?? user.elo;
   const frontendElo = user.ratings?.FRONTEND?.elo ?? 1000;
+  const debugElo = user.ratings?.DEBUG?.elo ?? 1000;
   const logout = useAuthStore((s) => s.logout);
   const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
@@ -72,8 +73,8 @@ export default function Navbar() {
           <Link
             to={`/u/${user.username}`}
             className="flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 font-mono text-sm font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition ring-inset hover:bg-emerald-500/20"
-            title="Your ELO: Algorithms · Frontend"
-            aria-label={`Your ELO: ${algoElo} in Algorithms, ${frontendElo} in Frontend. Open your profile`}
+            title="Your ELO: Algorithms · Frontend · Debug"
+            aria-label={`Your ELO: ${algoElo} in Algorithms, ${frontendElo} in Frontend, ${debugElo} in Debug. Open your profile`}
             data-testid="nav-elo"
           >
             <span>
@@ -93,6 +94,18 @@ export default function Navbar() {
                 F
               </span>
               {frontendElo}
+            </span>
+            <span className="text-emerald-300/40" aria-hidden="true">
+              ·
+            </span>
+            <span className="text-amber-200" data-testid="nav-elo-debug">
+              <span
+                className="mr-1 text-[0.65rem] font-medium text-amber-200/70"
+                aria-hidden="true"
+              >
+                D
+              </span>
+              {debugElo}
             </span>
           </Link>
           <button

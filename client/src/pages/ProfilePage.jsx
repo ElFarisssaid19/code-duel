@@ -5,6 +5,7 @@ import Pagination from '@/components/Pagination.jsx';
 import ResultBadge from '@/components/ResultBadge.jsx';
 import UserLink from '@/components/UserLink.jsx';
 import { formatClock, REASON_LABELS } from '@/components/match/format.js';
+import GhostName from '@/components/match/GhostName.jsx';
 import EloChart from '@/components/profile/EloChart.jsx';
 import Card from '@/components/ui/Card.jsx';
 import EmptyState from '@/components/ui/EmptyState.jsx';
@@ -28,7 +29,9 @@ const MODES = [
   { id: 'all', label: 'All' },
   { id: 'ranked', label: 'Ranked' },
   { id: 'private', label: 'Private' },
+  { id: 'ghost', label: 'Ghost' },
 ];
+const MODE_LABELS = { RANKED: 'Ranked', PRIVATE: 'Private', GHOST: 'Ghost' };
 const formatDate = (iso, opts = { year: 'numeric', month: 'short', day: 'numeric' }) =>
   new Date(iso).toLocaleDateString(undefined, opts);
 
@@ -118,14 +121,18 @@ function MatchRow({ match }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">
           <span className="text-ink-subtle">vs </span>
-          <UserLink username={match.opponent.username} className="font-medium text-ink" />
+          {match.opponent.ghost ? (
+            <GhostName ghost={match.opponent.ghost} compact className="text-ink" />
+          ) : (
+            <UserLink username={match.opponent.username} className="font-medium text-ink" />
+          )}
           <span className="ml-1.5 font-mono text-xs text-ink-subtle">{match.opponent.elo}</span>
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
           <span className="truncate">{match.problem.title}</span>
           <DifficultyBadge difficulty={match.problem.difficulty} />
           <span aria-hidden="true">·</span>
-          <span>{match.mode === 'RANKED' ? 'Ranked' : 'Private'}</span>
+          <span>{MODE_LABELS[match.mode] ?? match.mode}</span>
           <span aria-hidden="true">·</span>
           <span>{REASON_LABELS[match.endReason] ?? match.endReason}</span>
           {match.track && (
@@ -156,6 +163,9 @@ function MatchRow({ match }) {
               </p>
               <p className="text-xs text-ink-subtle">
                 {match.solveTimeMs !== null ? `solved ${formatClock(match.solveTimeMs)}` : 'tests'}
+                {match.linesChanged !== undefined && match.linesChanged !== null
+                  ? ` · ${match.linesChanged} lines`
+                  : ''}
               </p>
             </>
           )}
@@ -196,6 +206,44 @@ function HistorySkeleton() {
         ))}
       </Card>
     </SkeletonGroup>
+  );
+}
+
+/** W/L/D against real players (ranked) and against ghosts/bots, for this category. */
+function OpponentBreakdown({ username, category }) {
+  const { data, error, retry } = useApi(`/users/${username}/opponents?category=${category}`);
+  if (error) return <ErrorState message={error.message} onRetry={retry} />;
+  if (!data) return null;
+  const rows = [
+    { key: 'vsPlayers', label: '⚔ vs players', hint: 'ranked duels' },
+    { key: 'vsGhosts', label: '👻 vs ghosts', hint: 'replays and bots' },
+  ];
+  return (
+    <Card as="section" padding="p-5" className="space-y-3" aria-labelledby="opponents-title">
+      <h2 id="opponents-title" className="text-lg font-semibold">
+        vs players / vs ghosts
+      </h2>
+      <dl className="grid gap-3 sm:grid-cols-2" data-testid="opponent-breakdown">
+        {rows.map(({ key, label, hint }) => {
+          const r = data[key];
+          return (
+            <div key={key} className="rounded-xl border border-line bg-canvas/50 px-4 py-3">
+              <dt className="text-sm text-ink-muted">
+                {label} <span className="text-xs text-ink-subtle">· {hint}</span>
+              </dt>
+              <dd className="mt-1 font-mono text-lg">
+                <span className="text-emerald-300">{r.wins}W</span>{' '}
+                <span className="text-red-300">{r.losses}L</span>{' '}
+                <span className="text-zinc-300">{r.draws}D</span>
+                <span className="ml-2 text-xs text-ink-subtle">
+                  {r.games} game{r.games === 1 ? '' : 's'}
+                </span>
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+    </Card>
   );
 }
 
@@ -431,6 +479,8 @@ export default function ProfilePage() {
           <SolvedBreakdown solved={profile.solved} own={own} category={category} />
         </Card>
       </div>
+
+      <OpponentBreakdown username={profile.username} category={category} />
 
       <MatchHistory username={profile.username} own={own} />
     </main>

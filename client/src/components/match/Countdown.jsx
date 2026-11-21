@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import Logo from '@/components/Logo.jsx';
+import GhostName from '@/components/match/GhostName.jsx';
 import { playSound } from '@/lib/sound.js';
 
 const playedTicks = new Set();
@@ -23,7 +24,8 @@ export default function Countdown({ state, now, offsetMs }) {
         <Logo className="text-sm" />
       </div>
       <p className="eyebrow motion-safe:animate-pop-in">
-        {state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel'} · Match found
+        {{ RANKED: 'Ranked duel', PRIVATE: 'Private duel', GHOST: 'Ghost duel' }[state.mode]} ·{' '}
+        {state.mode === 'GHOST' ? 'Replay ready' : 'Match found'}
       </p>
       <div className="flex items-center gap-5 sm:gap-10">
         <PlayerTag player={me} label="You" side="me" />
@@ -56,7 +58,7 @@ function PlayerTag({ player, label, side }) {
       <p
         className={`font-display text-xl font-bold sm:text-2xl ${side === 'me' ? 'text-emerald-300' : 'text-sky-300'}`}
       >
-        {player.username}
+        {player.ghost ? <GhostName ghost={player.ghost} compact /> : player.username}
       </p>
       <p className="font-mono text-sm text-ink-subtle">
         {player.elo} ELO{label ? ` · ${label}` : ''}

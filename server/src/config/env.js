@@ -18,7 +18,11 @@ const envSchema = z.object({
     .url({ error: 'RENDERER_URL must be a valid URL, e.g. http://localhost:5070' })
     .default('http://localhost:5070'),
   RENDERER_PROVIDER: z.enum(['playwright']).default('playwright'),
-  /** Where the seed writes FRONTEND target images (relative to server/ or absolute). */
+  /** Public URL of the app (share links and Open Graph tags need absolute URLs). */
+  APP_URL: z
+    .url({ error: 'APP_URL must be a valid URL, e.g. https://codeduel.example.com' })
+    .default('http://localhost:5173'),
+  /** Where the seed writes FRONTEND target images and share cards are cached (relative to server/ or absolute). */
   DATA_DIR: z.string().default('data'),
 });
 

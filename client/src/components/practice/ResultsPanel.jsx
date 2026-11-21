@@ -51,7 +51,15 @@ function TestDetails({ test, params }) {
 }
 
 /** Bottom panel: summary line ("Accepted 8/8"), one tab per test, and the selected test's details. */
-export default function ResultsPanel({ result, running, error, activeTab, onTabChange, params }) {
+export default function ResultsPanel({
+  result,
+  running,
+  error,
+  activeTab,
+  onTabChange,
+  params,
+  linesChanged = null,
+}) {
   if (running) {
     return (
       <div
@@ -100,6 +108,11 @@ export default function ResultsPanel({ result, running, error, activeTab, onTabC
               {result.mode === 'submit' ? 'All tests' : 'Sample tests'}
               {result.timeMs !== null && ` · CPU ${result.timeMs} ms`}
             </span>
+            {linesChanged !== null && (
+              <span className="font-mono text-xs text-amber-100" data-testid="result-lines">
+                {linesChanged} line{linesChanged === 1 ? '' : 's'} changed
+              </span>
+            )}
           </div>
 
           {result.compileError && (

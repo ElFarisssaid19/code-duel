@@ -6,6 +6,7 @@ import matchRoutes from './matches.routes.js';
 import practiceRoutes from './practice.routes.js';
 import problemRoutes from './problems.routes.js';
 import settingsRoutes from './settings.routes.js';
+import { shareApiRouter } from './share.routes.js';
 import statsRoutes from './stats.routes.js';
 import userRoutes from './users.routes.js';
 
@@ -20,5 +21,6 @@ router.use('/users', userRoutes);
 router.use('/matches', matchRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/stats', statsRoutes);
+router.use('/share', shareApiRouter);
 
 export default router;

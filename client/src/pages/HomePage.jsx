@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import FormError from '@/components/FormError.jsx';
 import { formatClock } from '@/components/match/format.js';
 import Button from '@/components/ui/Button.jsx';
@@ -20,6 +20,52 @@ const ROOM_DIFFICULTIES = [
   { value: 'MEDIUM', label: 'Medium' },
   { value: 'HARD', label: 'Hard' },
 ];
+
+/**
+ * One-time notice for accounts created before ghost replays existed. Dismissing it (or opening
+ * Settings from it) is stored on the account, so it doesn't come back on other devices.
+ */
+function GhostNoticeBanner() {
+  const dismissGhostNotice = useAuthStore((s) => s.dismissGhostNotice);
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function dismiss(thenSettings) {
+    setBusy(true);
+    setError(null);
+    try {
+      await dismissGhostNotice();
+      if (thenSettings) navigate('/settings');
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section
+      className="space-y-3 rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4 motion-safe:animate-fade-up"
+      aria-label="Ghost replays"
+      data-testid="ghost-notice"
+    >
+      <p className="text-sm text-sky-100">
+        <span aria-hidden="true">👻 </span>
+        Your ranked runs may be replayed as ghosts for other players (your username and progress,
+        never your code). You can turn this off anytime in Settings.
+      </p>
+      {error && <p className="text-xs text-red-300">{error}</p>}
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => dismiss(false)} disabled={busy}>
+          Got it
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => dismiss(true)} loading={busy}>
+          Settings
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 const TRACK_OPTIONS = [
   { value: '', label: 'Any track' },
@@ -46,9 +92,15 @@ function CategoryPanel({ choice, onChange, disabled }) {
         onChange={(category) => !disabled && onChange({ category, track: null })}
       />
       <p className="text-sm text-ink-muted">
-        {choice.category === 'FRONTEND'
-          ? 'Reproduce a target design with HTML/CSS. The first to reach the score threshold wins.'
-          : 'Solve an algorithm problem in JavaScript or Python. The first to pass every test wins.'}
+        {
+          {
+            FRONTEND:
+              'Reproduce a target design with HTML/CSS. The first to reach the score threshold wins.',
+            DEBUG:
+              'Fix the bugs in code you are given (JavaScript or Python). The first to pass every test wins; fewer lines changed breaks ties.',
+            ALGO: 'Solve an algorithm problem in JavaScript or Python. The first to pass every test wins.',
+          }[choice.category]
+        }
       </p>
       {choice.category === 'FRONTEND' && (
         <div className="flex items-center gap-3">
@@ -88,7 +140,7 @@ function Panel({ title, children, glow }) {
   );
 }
 
-function RankedPanel({ queue, busy, disabled, onPlay, onCancel, choice }) {
+function RankedPanel({ queue, busy, disabled, onPlay, onCancel, onGhost, ghostBusy, choice }) {
   if (queue) {
     return (
       <Panel title="Ranked" glow="accent">
@@ -111,6 +163,20 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel, choice }) {
             Cancel
           </Button>
         </div>
+        {queue.ghostOffer && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 motion-safe:animate-fade-up"
+            data-testid="ghost-offer"
+          >
+            <p className="text-sm text-sky-100">
+              No opponent yet. Play a <strong>replay</strong> of a real player&apos;s past run while
+              you wait?
+            </p>
+            <Button size="sm" onClick={onGhost} loading={ghostBusy}>
+              Play a ghost now
+            </Button>
+          </div>
+        )}
       </Panel>
     );
   }
@@ -129,6 +195,20 @@ function RankedPanel({ queue, busy, disabled, onPlay, onCancel, choice }) {
       >
         Play ranked
       </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
+        <p className="text-xs text-ink-subtle">
+          👻 Replay a real player&apos;s past ranked run (or a 🤖 bot). Half the rating change.
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onGhost}
+          loading={ghostBusy}
+          disabled={disabled}
+        >
+          Play vs ghost
+        </Button>
+      </div>
     </Panel>
   );
 }
@@ -270,7 +350,12 @@ export default function HomePage() {
   const [choice, setChoice] = useState(() => initialChoice(searchParams.get('category')));
   const rating = user.ratings?.[choice.category] ?? user;
   const options =
-    choice.category === 'FRONTEND' ? { category: 'FRONTEND', track: choice.track } : {};
+    choice.category === 'ALGO'
+      ? {}
+      : {
+          category: choice.category,
+          ...(choice.category === 'FRONTEND' && { track: choice.track }),
+        };
 
   function changeChoice(next) {
     setChoice(next);
@@ -320,6 +405,8 @@ export default function HomePage() {
         </dl>
       </Card>
 
+      {user.ghostNoticeDismissed === false && <GhostNoticeBanner />}
+
       <FormError>{error ?? notice}</FormError>
       {offline && (
         <p className="text-center text-sm text-amber-200" role="status">
@@ -336,6 +423,22 @@ export default function HomePage() {
         disabled={!idle || offline}
         onPlay={() => act('queue', async () => setQueue(await request('queue:join', options)))}
         onCancel={() => act('queue', async () => (await request('queue:leave'), setQueue(null)))}
+        onGhost={() =>
+          // From the queue, the ghost uses the queue's category; match:found navigates.
+          act('ghost', async () => {
+            const from = queue ?? options;
+            await request(
+              'ghost:start',
+              from.category && from.category !== 'ALGO'
+                ? {
+                    category: from.category,
+                    ...(from.category === 'FRONTEND' && from.track && { track: from.track }),
+                  }
+                : {},
+            );
+          })
+        }
+        ghostBusy={busy === 'ghost'}
       />
       {!queue && (
         <>

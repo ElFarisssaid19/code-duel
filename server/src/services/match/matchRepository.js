@@ -57,6 +57,7 @@ export function createMatchRepository(db = prisma) {
         category: p.category,
         description: p.description,
         starterCode: p.starterCode,
+        ...(p.category === 'DEBUG' && { bugCount: p.bugCount }),
       };
       if (p.category === 'FRONTEND') {
         return {
@@ -82,6 +83,80 @@ export function createMatchRepository(db = prisma) {
         })),
       };
     },
+
+    /**
+     * Ghost candidates: one entry per (finished RANKED match, player) of a category, never the
+     * excluded user, only players who allow ghosts, only runs with at least one submission.
+     * PRIVATE and GHOST matches are never used. Newest first, up to `limit` matches.
+     * → [{ matchId, problemId, userId, username, elo, solved, startedAt, endedAt }]
+     */
+    async findGhostRuns({ category, track = null, excludeUserId, limit = 300 }) {
+      const matches = await db.match.findMany({
+        where: {
+          mode: 'RANKED',
+          status: 'FINISHED',
+          category,
+          startedAt: { not: null },
+          ...(track && { problem: { track } }),
+        },
+        orderBy: [{ endedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          problemId: true,
+          testCount: true,
+          startedAt: true,
+          endedAt: true,
+          player1Id: true,
+          player2Id: true,
+          player1Elo: true,
+          player2Elo: true,
+          player1Passed: true,
+          player2Passed: true,
+          player1: { select: { username: true, allowGhosts: true } },
+          player2: { select: { username: true, allowGhosts: true } },
+          submissions: { select: { userId: true }, distinct: ['userId'] },
+        },
+      });
+      const runs = [];
+      for (const m of matches) {
+        const submitted = new Set(m.submissions.map((s) => s.userId));
+        for (const n of [1, 2]) {
+          const userId = m[`player${n}Id`];
+          const user = m[`player${n}`];
+          if (!user || userId === excludeUserId || !user.allowGhosts || !submitted.has(userId)) {
+            continue;
+          }
+          runs.push({
+            matchId: m.id,
+            problemId: m.problemId,
+            userId,
+            username: user.username,
+            elo: m[`player${n}Elo`],
+            solved: m[`player${n}Passed`] === m.testCount,
+            startedAt: m.startedAt,
+            endedAt: m.endedAt,
+          });
+        }
+      }
+      return runs;
+    },
+
+    /** The submissions of one player in one match, oldest first (a ghost's replay timeline). */
+    loadRunSubmissions: (matchId, userId) =>
+      db.submission.findMany({
+        where: { matchId, userId },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: {
+          createdAt: true,
+          status: true,
+          passed: true,
+          total: true,
+          score: true,
+          charCount: true,
+          linesChanged: true,
+        },
+      }),
 
     createMatch: (data) => db.match.create({ data, select: { id: true } }),
 
@@ -120,6 +195,8 @@ export function createMatchRepository(db = prisma) {
         include: {
           player1: { select: { id: true, username: true } },
           player2: { select: { id: true, username: true } },
+          ghostUser: { select: { id: true, username: true } },
+          ghostSourceMatch: { select: { endedAt: true } },
         },
       }),
 

@@ -1,6 +1,7 @@
 /**
  * Captures the README media with headless Chrome against the running dev stack:
- *   docs/screenshots/{landing,arena,result,leaderboard,profile,practice,arena-mobile,frontend-practice}.png
+ *   docs/screenshots/{landing,arena,result,leaderboard,profile,practice,arena-mobile,
+ *     frontend-practice,debug-practice,ghost-arena,share-card}.png
  *   docs/demo.gif (a duel from "match found" to the result)
  *
  * It registers two fresh demo accounts and plays three real ranked duels (so the profile has an
@@ -12,6 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import debugProblems from '../../server/prisma/seed/debug/index.js';
 import frontendProblems from '../../server/prisma/seed/frontend/index.js';
 import { launchBrowser, sleep } from './browser.mjs';
 
@@ -105,6 +107,7 @@ try {
   await a.register(`nova_${tag}`);
   await b.register(`rook_${tag}`);
   const frames = mkdtempSync(join(tmpdir(), 'code-duel-gif-'));
+  let firstMatchId = null;
 
   for (const round of [1, 2, 3]) {
     const winner = round === 3 ? b : a;
@@ -119,6 +122,7 @@ try {
     await b.click('Play ranked');
     await a.waitFor(IN_MATCH, 'A in match');
     await b.waitFor(IN_MATCH, 'B in match');
+    firstMatchId ??= Number(await a.evaluate(`location.pathname.split('/').pop()`));
     if (round === 3) await a.viewport(375, 812, true, 2);
     await a.waitFor(ARENA, 'A arena', 30_000);
     await b.waitFor(ARENA, 'B arena', 30_000);
@@ -220,6 +224,50 @@ try {
   await a.waitFor(`!!document.querySelector('[data-testid=diff-image]')`, 'diff image');
   await sleep(300);
   await shot(a, 'frontend-practice');
+
+  // 5. Debug practice: the bug fixed (1 line changed), accepted.
+  const pairCount = debugProblems.find((p) => p.slug === 'debug-pair-count');
+  await a.goto('/practice/debug-pair-count');
+  await a.waitFor(
+    `!!window.__codeDuelEditor && !!document.querySelector('[data-testid=lines-changed]')`,
+    'debug practice',
+    30_000,
+  );
+  await typeCode(a, pairCount.fixed.javascript, { delayMs: 10 });
+  await sleep(3100); // practice rate limit
+  await a.click('Submit');
+  await a.waitFor(`!!document.querySelector('[data-testid=result-lines]')`, 'debug result', 30_000);
+  await sleep(300);
+  await shot(a, 'debug-practice');
+
+  // 6. Ghost duel: nova races a replay of rook's ranked run (always labelled as a replay).
+  await a.goto('/');
+  await a.waitFor(PLAYABLE, 'home for ghost');
+  await a.click('Play vs ghost');
+  await a.waitFor(
+    `${IN_MATCH} && !!document.querySelector('[data-testid=ghost-name]')`,
+    'ghost match',
+    15_000,
+  );
+  await a.waitFor(ARENA, 'ghost arena', 30_000);
+  await sleep(2500);
+  await shot(a, 'ghost-arena');
+  await a.click('Forfeit');
+  await a.waitFor(`!!document.querySelector('[role=dialog]')`, 'forfeit dialog');
+  await a.evaluate(
+    `[...document.querySelectorAll('[role=dialog] button')].find((b) => b.textContent.trim() === 'Forfeit').click()`,
+  );
+  await a.waitFor(RESULT, 'ghost result');
+
+  // 7. The share card of nova's first win (what a link preview shows).
+  const card = await a.evaluate(`(async () => {
+    const { share } = await (await fetch('/api/matches/${firstMatchId}/share', { method: 'POST' })).json();
+    const png = await (await fetch('/api/share/' + share.shareId + '/card.png?format=og')).arrayBuffer();
+    let binary = ''; for (const byte of new Uint8Array(png)) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  })()`);
+  writeFileSync(join(shots, 'share-card.png'), Buffer.from(card, 'base64'));
+  console.log('✔ docs/screenshots/share-card.png');
 
   const errors = [...a.errors, ...b.errors];
   if (errors.length) console.warn('Browser errors:\n', errors.join('\n'));

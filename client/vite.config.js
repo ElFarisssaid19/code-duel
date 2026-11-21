@@ -7,6 +7,8 @@ const API_TARGET = 'http://localhost:4000';
 const proxy = {
   '/api': { target: API_TARGET, changeOrigin: true },
   '/socket.io': { target: API_TARGET, changeOrigin: true, ws: true },
+  // Public share pages (/s/<shareId>) are served by Express. Regex: not /settings.
+  '^/s/': { target: API_TARGET, changeOrigin: true },
 };
 
 // https://vite.dev/config/

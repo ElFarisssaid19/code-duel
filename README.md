@@ -4,7 +4,7 @@
 
 **Same problem. Same clock. One winner.**
 
-Real-time 1v1 coding battles in the browser, in two categories:
+Real-time 1v1 coding battles in the browser, in three categories:
 
 - **Algorithms:** two developers get the same problem and write JavaScript or Python against a
   server-owned clock. The first to pass every hidden test wins the match and the ELO. Code runs
@@ -12,8 +12,12 @@ Real-time 1v1 coding battles in the browser, in two categories:
 - **Frontend:** both players reproduce the same target design with HTML and/or CSS. A
   sandboxed Chromium renders each submission and scores it pixel by pixel. The first to reach
   the threshold wins.
+- **Debug:** both players get the same buggy code. The first to make every test pass wins;
+  fewer lines changed breaks ties.
 
-Both players see each other's progress live over WebSockets.
+Both players see each other's progress live over WebSockets. No opponent online? Race a
+**ghost**: a replay of a real player's past ranked run (or a clearly labelled bot). Every finished
+match can be shared as a result card with a public link.
 
 ![Node.js 24](https://img.shields.io/badge/Node.js-24-5FA04E?logo=nodedotjs&logoColor=white)
 ![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
@@ -25,7 +29,7 @@ Both players see each other's progress live over WebSockets.
 ![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1?logo=mysql&logoColor=white)
 ![go-judge](https://img.shields.io/badge/sandbox-go--judge-00ADD8?logo=go&logoColor=white)
 ![Chromium renderer](<https://img.shields.io/badge/renderer-Chromium_(Playwright)-2EAD33?logo=googlechrome&logoColor=white>)
-![Tests](https://img.shields.io/badge/tests-268_passing-34EAA2)
+![Tests](https://img.shields.io/badge/tests-330_passing-34EAA2)
 
 ![A ranked duel, from "match found" to the result](docs/demo.gif)
 
@@ -45,6 +49,14 @@ Both players see each other's progress live over WebSockets.
 the official diff (red = pixels that differ) after a submit.
 
 ![Frontend practice: target, CSS editor, score and diff](docs/screenshots/frontend-practice.png)
+
+| **Debug practice:** buggy code, live lines changed     | **Ghost duel:** a replay, always labelled as one |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| ![Debug practice](docs/screenshots/debug-practice.png) | ![Ghost duel](docs/screenshots/ghost-arena.png)  |
+
+**Share card** (1200×630 link preview, also rendered as a 1080×1920 story):
+
+![Share card: VICTORY, both players, result, rating change](docs/screenshots/share-card.png)
 
 <p align="center">
   <img src="docs/screenshots/arena-mobile.png" alt="The arena on a 375 px phone: Problem / Editor / Results tabs" width="280"><br>
@@ -68,7 +80,18 @@ the official diff (red = pixels that differ) after a submit.
   Each problem shows the target, its palette (click to copy) and the canvas size. The editor has
   a sandboxed live preview with compare tools: a slider, a 50 % overlay and the official diff.
 
-- **Separate ratings per category:** ALGO and FRONTEND each have their own ELO, W/L/D,
+- **10 debug problems** (4 easy, 4 medium, 2 hard) with realistic bugs: off-by-one, `>` vs
+  `>=`, integer division, Python's mutable default argument, sorting numbers as strings, `===` on
+  floats, mutating the input, shadowing, a missing `return`, wrong loop bounds. The seed proves,
+  in both languages, that each buggy version fails and each fix passes.
+- **Ghost and bot opponents:** after 20 s in the queue (or from Home), race a replay of a real
+  player's past ranked run at the recorded times, or one of 4 bots when there is none. Always
+  shown as "👻 Ghost of @user (replay from <date>)" or "🤖 Bot <name>"; K=16, and only your
+  rating changes. Players can opt out of being replayed.
+- **Share cards:** a result card (link preview and story formats) rendered by the sandboxed
+  renderer, with a public `/s/<id>` page (Open Graph tags), Web Share, WhatsApp, downloads and
+  revocable links.
+- **Separate ratings per category:** ALGO, FRONTEND and DEBUG each have their own ELO, W/L/D,
   leaderboard, profile stats and ELO chart.
 - **Practice mode:** the same judge and renderer, with no opponent.
 - **Leaderboard, profiles and match details:** ranks with ties, a hand-drawn SVG ELO chart,
@@ -92,9 +115,9 @@ flowchart LR
   end
 
   subgraph Server["Node.js 24 server"]
-    API["Express 5 REST API<br/>auth, problems, practice,<br/>leaderboard, settings, stats"]
-    WS["Socket.io 4<br/>queue, rooms, live match"]
-    MM["MatchManager<br/>server-owned timers,<br/>matchmaker, ELO"]
+    API["Express 5 REST API<br/>auth, problems, practice,<br/>leaderboard, settings, stats,<br/>share links + /s/:id pages"]
+    WS["Socket.io 4<br/>queue, rooms, ghosts, live match"]
+    MM["MatchManager<br/>server-owned timers,<br/>matchmaker, ghost replays, ELO"]
     JG["Judge service<br/>harness + verdicts"]
     RS["Renderer client<br/>track rules + scoring"]
   end
@@ -113,11 +136,18 @@ flowchart LR
   API --> RS
   MM --> RS
   RS -- "REST: render + compare" --> RD
+  API -- "REST: render share cards" --> RD
   API --> DB
   MM -- "one transaction per result" --> DB
 ```
 
 ## The hard parts
+
+- **Ghosts that never pretend to be people:** a ghost replays only the progress of a real ranked
+  run (tests passed, score, lines changed) at the recorded offsets, on the server clock. No code is
+  replayed or shown. Every payload carries a `ghost: { kind: 'ghost' | 'bot', … }` descriptor, the
+  UI always labels it, and there is no typing indicator or online/offline state for it. Private
+  matches and players who opted out are never used.
 
 - **Running untrusted code safely:** every run executes in a nested
   [go-judge](https://github.com/criyle/go-judge) sandbox (Linux namespaces, seccomp, cgroup v2):
@@ -159,7 +189,7 @@ flowchart LR
 
 ## Tests
 
-**268 tests in 23 files, all passing.** They run against a real MySQL test database and
+**330 tests in 29 files, all passing.** They run against a real MySQL test database and
 the real go-judge and renderer containers:
 
 - Unit tests: the judge, harnesses, ELO, the matchmaker and the match state machine (with fake
@@ -171,6 +201,12 @@ the real go-judge and renderer containers:
 - Renderer integration: references score 100.00, a `<script>` can't paint the page, external
   URLs never load, a too-slow page fails cleanly. Track rules, FRONTEND duel rules, and the
   rating migration on a scratch database.
+- Debug: every seeded buggy version fails and every fix passes (both languages, real judge),
+  lines-changed diffs, timeout tiebreaks, isolated ratings, a real-socket ranked debug duel.
+- Ghosts and bots (fake timers): replay timing, who wins, timeout comparison, K=16 for the human
+  only, bot fallback, opt-out / private / own-run exclusion (real query), honest payloads.
+- Share cards: participants only, finished only, unguessable ids, revoke → 404, absolute Open
+  Graph URLs, both PNG sizes, HTML escaping.
 
 Details in [Tests](#tests-1).
 
@@ -183,7 +219,7 @@ npm install
 cp infra/.env.example infra/.env && cp server/.env.example server/.env   # then set real secrets
 npm run infra:up      # MySQL + go-judge + renderer
 npm run db:migrate    # schema
-npm run db:seed       # 16 algorithm problems (checked through go-judge) + 18 frontend targets
+npm run db:seed       # 16 algorithm + 10 debug problems (checked through go-judge) + 18 frontend targets
 npm run dev           # http://localhost:5173
 ```
 
@@ -303,7 +339,8 @@ production).
 | go-judge API        | 5050 | http://localhost:5050/version    |
 | Renderer API        | 5070 | http://localhost:5070/health     |
 
-In development the Vite server proxies `/api` and `/socket.io` (WebSocket included) to port 4000,
+In development the Vite server proxies `/api`, `/socket.io` (WebSocket included) and the public
+share pages `/s/*` to port 4000,
 so the browser talks to one origin and doesn't need CORS.
 
 ## Environment variables
@@ -315,18 +352,19 @@ not 5060/5061: `fetch()` refuses those ports).
 **`server/.env`**: validated with Zod at startup (`server/src/config/env.js`). If a value is
 missing or invalid, the server exits with a clear error.
 
-| Variable            | Example                                                                             |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `PORT`              | `4000`                                                                              |
-| `NODE_ENV`          | `development` / `test` / `production`                                               |
-| `CLIENT_URL`        | `http://localhost:5173` (CORS origin)                                               |
-| `DATABASE_URL`      | `mysql://codeduel:<password>@localhost:3306/code_duel?allowPublicKeyRetrieval=true` |
-| `JWT_SECRET`        | 32+ random characters                                                               |
-| `JUDGE_URL`         | `http://localhost:5050` (go-judge REST API)                                         |
-| `JUDGE_PROVIDER`    | `gojudge` (default; see [Judge architecture](#judge-architecture))                  |
-| `RENDERER_URL`      | `http://localhost:5070` (default; the renderer service)                             |
-| `RENDERER_PROVIDER` | `playwright` (default; see [Renderer](#renderer-service))                           |
-| `DATA_DIR`          | `data` (default, relative to `server/`): where the seed writes target images        |
+| Variable            | Example                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `PORT`              | `4000`                                                                                                             |
+| `NODE_ENV`          | `development` / `test` / `production`                                                                              |
+| `CLIENT_URL`        | `http://localhost:5173` (CORS origin)                                                                              |
+| `DATABASE_URL`      | `mysql://codeduel:<password>@localhost:3306/code_duel?allowPublicKeyRetrieval=true`                                |
+| `JWT_SECRET`        | 32+ random characters                                                                                              |
+| `JUDGE_URL`         | `http://localhost:5050` (go-judge REST API)                                                                        |
+| `JUDGE_PROVIDER`    | `gojudge` (default; see [Judge architecture](#judge-architecture))                                                 |
+| `RENDERER_URL`      | `http://localhost:5070` (default; the renderer service)                                                            |
+| `RENDERER_PROVIDER` | `playwright` (default; see [Renderer](#renderer-service))                                                          |
+| `DATA_DIR`          | `data` (default, relative to `server/`): target images (`targets/`) and cached share cards (`cards/`)              |
+| `APP_URL`           | `http://localhost:5173` (default): public URL of the app, used for share links and Open Graph tags (absolute URLs) |
 
 **`server/.env.test`**: same variables, used only by `npm test`. `DATABASE_URL` must point to a
 database whose name ends in `_test` (default `code_duel_test`). Tests write target images to a temp
@@ -339,8 +377,9 @@ directory, never to `server/data`.
 ### Endpoints
 
 All under `/api/auth`. Bodies are JSON. Every user object contains only public fields:
-`id`, `username`, `email`, `preferredLanguage`, `createdAt`, and the ratings:
-`ratings: { ALGO: { elo, wins, losses, draws, bestElo }, FRONTEND: { … } }`. The top-level `elo`,
+`id`, `username`, `email`, `preferredLanguage`, `allowGhosts`, `ghostNoticeDismissed`, `createdAt`,
+and the ratings:
+`ratings: { ALGO: { elo, wins, losses, draws, bestElo }, FRONTEND: { … }, DEBUG: { … } }`. The top-level `elo`,
 `wins`, `losses` and `draws` are the ALGO rating, kept for compatibility. `passwordHash` and
 `tokenVersion` are never returned.
 
@@ -440,7 +479,7 @@ holding an older token gets `session:revoked` and is disconnected by the server.
 
 ## Tests
 
-The server test suite (Vitest + supertest + socket.io-client): **219 tests in 17 files**.
+The server test suite (Vitest + supertest + socket.io-client): **330 tests in 29 files**.
 
 - **Unit tests**: output comparison, go-judge status mapping and request units, harness generation,
   verdict building and sample/hidden merging (`test/judge/`). Also duels (`test/match/`), using
@@ -488,6 +527,22 @@ The server test suite (Vitest + supertest + socket.io-client): **219 tests in 17
   - The canvas document of the live preview matches the renderer's.
   - **Rating migration** on a scratch database: users keep their ELO / W/L/D / best ELO in ALGO,
     FRONTEND starts at 1000.
+- **Debug tests** (`test/debug/`): lines changed (including the client copy); every seeded
+  problem's buggy code fails a sample and a hidden test and its fix passes, in both languages
+  (real go-judge); 6/10/15-minute durations; timeout tiebreaks (tests → lines changed → earlier
+  submission → draw at 0); DEBUG ratings isolated from ALGO and FRONTEND; API and a real-socket
+  ranked debug duel.
+- **Ghost and bot tests** (`test/match/ghosts.test.js`, `test/ghostPool.test.js`): with fake
+  timers, the replay fires at the recorded offsets; the ghost wins when it solves first, the human
+  when faster; timeout comparison; K=16 and only the human's rating changes; leaving and
+  disconnecting are losses; the bot fallback on an empty pool; the 20 s queue offer; payloads
+  always carry the ghost/bot descriptor (no connection state, no typing). On the real database:
+  own runs, opted-out users, private matches and runs without submissions are excluded; the
+  Settings toggle; history, breakdown and match details flag ghosts and never show their code.
+- **Share tests** (`test/share.test.js`, real renderer): participants only, finished matches only,
+  one unguessable id per user per match (also under concurrent requests), the rate limit, revoke →
+  404 (page and cards), absolute Open Graph / Twitter URLs, both PNG sizes, no code or test data
+  on the page, and HTML escaping (a `<script>` username is text).
 - **Settings and public stats tests** (`test/settings.test.js`): `GET /api/stats/public` needs
   no auth and is cached for 60 s. Password change: requires the current password, validates the
   new one like register, keeps this session with a fresh cookie, rejects the old token afterwards
@@ -594,8 +649,10 @@ POST /api/practice/:slug/run|submit
 ## Duels
 
 Two players get the same problem; the server judges both with the same judge as practice. Every
-match is one category: **ALGO** (tests passed, judged by go-judge) or **FRONTEND** (pixel score,
-rendered by the renderer; see [Frontend category](#frontend-category)). The rules below apply to
+match is one category: **ALGO** (tests passed, judged by go-judge), **DEBUG** (fix buggy code,
+same judge; see [Debug category](#debug-category)) or **FRONTEND** (pixel score, rendered by the
+renderer; see [Frontend category](#frontend-category)). A match can also be against a ghost or a
+bot (mode `GHOST`; see [Ghost and bot opponents](#ghost-and-bot-opponents)). The rules below apply to
 both, except where the frontend section says otherwise. Ranked matches only change the rating of
 their category.
 
@@ -603,10 +660,10 @@ their category.
 
 | Rule                | Details                                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Modes               | **RANKED**: matchmaking queue, updates ELO, wins/losses/draws. **PRIVATE**: room code or invite link, **unranked** (no ELO or W/L/D change, so no ELO farming with friends).                                                                                                                                                                       |
+| Modes               | **RANKED**: matchmaking queue, updates ELO, wins/losses/draws. **GHOST**: against a replay or a bot, K=16, only the human's rating changes (see [Ghost and bot opponents](#ghost-and-bot-opponents)). **PRIVATE**: room code or invite link, **unranked** (no ELO or W/L/D change, so no ELO farming with friends).                                |
 | One thing at a time | A user can be in only one queue, room or match, across all tabs (`ALREADY_BUSY`). Nobody can play against themselves.                                                                                                                                                                                                                              |
 | States              | `WAITING` (both players found; waiting for both clients to join, max 30 s, otherwise `CANCELLED`) → `COUNTDOWN` (3 s) → `ACTIVE` → `FINISHED` or `CANCELLED`. Persisted on the `Match` row with `mode`, `endReason`, timings, ELO before/after and best progress.                                                                                  |
-| Duration            | EASY 10 min, MEDIUM 15 min, HARD 20 min. **The server owns every timer**; clients only display `endsAt` (corrected for clock skew with `serverNow`).                                                                                                                                                                                               |
+| Duration            | EASY 10 min, MEDIUM 15 min, HARD 20 min (DEBUG: 6 / 10 / 15 min). **The server owns every timer**; clients only display `endsAt` (corrected for clock skew with `serverNow`).                                                                                                                                                                      |
 | Problem             | Avoids problems either player saw in their last 5 matches when possible. Ranked difficulty from the average ELO: < 1100 EASY, < 1300 EASY or MEDIUM, otherwise MEDIUM or HARD. If a band ever has no problems, any difficulty is used. Private: the host picks EASY / MEDIUM / HARD / ANY (a difficulty with no problems is rejected).             |
 | Languages           | Each player picks JavaScript or Python and can switch at any time.                                                                                                                                                                                                                                                                                 |
 | Run / submit        | `match:run` judges the samples only (no effect on progress). `match:submit` judges everything (samples and hidden in separate executions), counts an attempt, and is saved as a `Submission` with `matchId`. Together: 1 request per 3 s per player.                                                                                               |
@@ -627,7 +684,8 @@ their category.
   **wider** of their two windows.
 - Oldest players are served first, each paired with the closest-rated compatible player.
 - Leaving the queue, disconnecting or closing the last tab removes the player. Waiting players
-  get `queue:status { elapsedMs, window }` every second.
+  get `queue:status { elapsedMs, window, ghostOffer }` every second (`ghostOffer` turns true after
+  20 s: the client then offers "Play a ghost now").
 - The queue sits behind a small store interface (`add / remove / get / has / list`), so the
   in-memory store can be replaced by Redis.
 
@@ -652,36 +710,37 @@ All request/response events use acknowledgement callbacks and answer
 `{ ok: true, data }` or `{ ok: false, error: { code, message } }`. Every payload is validated with zod
 (`server/src/validators/match.schemas.js`).
 
-| Client → server   | Payload                                                                    | Ack data                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `state:get`       | none                                                                       | `{ type: 'idle' \| 'queue' \| 'room' \| 'match', … }`: restores the UI / redirects to a live match                   |
-| `queue:join`      | none (ALGO) or `{ category: 'ALGO' \| 'FRONTEND', track? }`                | `{ status, category, track, elapsedMs?, window? }`                                                                   |
-| `queue:leave`     | none                                                                       | `{ status: 'idle' }`                                                                                                 |
-| `room:create`     | `{ difficulty: 'EASY' \| 'MEDIUM' \| 'HARD' \| 'ANY', category?, track? }` | room `{ code, difficulty, category, track, status, players, expiresAt }`                                             |
-| `room:join`       | `{ code }`                                                                 | `{ code, matchId }`                                                                                                  |
-| `room:leave`      | none                                                                       | `{ status: 'idle' }`                                                                                                 |
-| `match:rejoin`    | `{ matchId }`                                                              | full snapshot (also emitted as `match:state`)                                                                        |
-| `match:run`       | `{ language, code }` (ALGO only)                                           | `{ matchId, result }`: samples only                                                                                  |
-| `match:submit`    | ALGO `{ language, code }`, FRONTEND `{ html?, css? }`                      | `{ matchId, result, submission, progress }`. FRONTEND `result`: `{ score, solved, threshold, charCount, diffImage }` |
-| `match:forfeit`   | none                                                                       | `{ matchId }`                                                                                                        |
-| `match:activity`  | none (fire and forget, throttled)                                          | none                                                                                                                 |
-| `rematch:request` | `{ matchId? }`                                                             | `{ matchId, status, requestedBy, newMatchId? }`                                                                      |
+| Client → server   | Payload                                                                                | Ack data                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `state:get`       | none                                                                                   | `{ type: 'idle' \| 'queue' \| 'room' \| 'match', … }`: restores the UI / redirects to a live match                   |
+| `queue:join`      | none (ALGO) or `{ category: 'ALGO' \| 'FRONTEND' \| 'DEBUG', track? }`                 | `{ status, category, track, elapsedMs?, window?, ghostOffer? }`                                                      |
+| `queue:leave`     | none                                                                                   | `{ status: 'idle' }`                                                                                                 |
+| `ghost:start`     | none (ALGO) or `{ category, track? }`; also accepted while queueing (leaves the queue) | `{ matchId, mode: 'GHOST', ghost }`: then `match:found`, like any match                                              |
+| `room:create`     | `{ difficulty: 'EASY' \| 'MEDIUM' \| 'HARD' \| 'ANY', category?, track? }`             | room `{ code, difficulty, category, track, status, players, expiresAt }`                                             |
+| `room:join`       | `{ code }`                                                                             | `{ code, matchId }`                                                                                                  |
+| `room:leave`      | none                                                                                   | `{ status: 'idle' }`                                                                                                 |
+| `match:rejoin`    | `{ matchId }`                                                                          | full snapshot (also emitted as `match:state`)                                                                        |
+| `match:run`       | `{ language, code }` (ALGO only)                                                       | `{ matchId, result }`: samples only                                                                                  |
+| `match:submit`    | ALGO `{ language, code }`, FRONTEND `{ html?, css? }`                                  | `{ matchId, result, submission, progress }`. FRONTEND `result`: `{ score, solved, threshold, charCount, diffImage }` |
+| `match:forfeit`   | none                                                                                   | `{ matchId }`                                                                                                        |
+| `match:activity`  | none (fire and forget, throttled)                                                      | none                                                                                                                 |
+| `rematch:request` | `{ matchId? }`                                                                         | `{ matchId, status, requestedBy, newMatchId? }`                                                                      |
 
-| Server → client                            | Payload                                                                                                                                                                          |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queue:status`                             | `{ status: 'searching', elapsedMs, window }` (`window: null` = anyone) or `{ status: 'idle' }`                                                                                   |
-| `room:update`                              | `{ code, difficulty, status: 'open' \| 'starting' \| 'closed', players, expiresAt, reason? }`                                                                                    |
-| `match:found`                              | `{ matchId, mode }`                                                                                                                                                              |
-| `match:countdown`                          | `{ matchId, startsAt, serverNow }`                                                                                                                                               |
-| `match:start`                              | `{ matchId, problem (samples only), endsAt, serverNow, me, opponent: { username, elo, … } }`                                                                                     |
-| `match:state`                              | snapshot on rejoin: status, problem, `endsAt`, `remainingMs`, `me`, `opponent`, result, rematch                                                                                  |
-| `match:run:result` / `match:submit:result` | same payload as the ack (sent to all of the player's tabs)                                                                                                                       |
-| `opponent:progress`                        | `{ userId, passed, total, attempts }` (FRONTEND adds `score`, `threshold`: never code or previews)                                                                               |
-| `opponent:activity`                        | `{ at }`: "opponent is typing"                                                                                                                                                   |
-| `opponent:connection`                      | `{ connected, graceEndsAt? }`                                                                                                                                                    |
-| `match:end`                                | `{ matchId, mode, winnerId, reason, eloChanges: { [userId]: { before, after, delta } } \| null, summary }` (FRONTEND adds `category`; summary players have `score`, `charCount`) |
-| `rematch:update`                           | `{ matchId, status: 'pending' \| 'accepted' \| 'expired' \| 'cancelled', requestedBy }`                                                                                          |
-| `match:error`                              | `{ code, message }`: a match couldn't be created after pairing                                                                                                                   |
+| Server → client                            | Payload                                                                                                                                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue:status`                             | `{ status: 'searching', elapsedMs, window, ghostOffer }` (`window: null` = anyone) or `{ status: 'idle' }`                                                                                |
+| `room:update`                              | `{ code, difficulty, status: 'open' \| 'starting' \| 'closed', players, expiresAt, reason? }`                                                                                             |
+| `match:found`                              | `{ matchId, mode }` (`mode: 'GHOST'` for ghost/bot matches)                                                                                                                               |
+| `match:countdown`                          | `{ matchId, startsAt, serverNow }`                                                                                                                                                        |
+| `match:start`                              | `{ matchId, problem (samples only), endsAt, serverNow, me, opponent: { username, elo, … } }`                                                                                              |
+| `match:state`                              | snapshot on rejoin: status, problem, `endsAt`, `remainingMs`, `me`, `opponent`, result, rematch                                                                                           |
+| `match:run:result` / `match:submit:result` | same payload as the ack (sent to all of the player's tabs)                                                                                                                                |
+| `opponent:progress`                        | `{ userId, passed, total, attempts }` (DEBUG adds `linesChanged`; FRONTEND adds `score`, `threshold`: never code or previews). In ghost matches the replay sends it at the recorded times |
+| `opponent:activity`                        | `{ at }`: "opponent is typing"                                                                                                                                                            |
+| `opponent:connection`                      | `{ connected, graceEndsAt? }`                                                                                                                                                             |
+| `match:end`                                | `{ matchId, mode, winnerId, reason, eloChanges: { [userId]: { before, after, delta } } \| null, summary }` (FRONTEND adds `category`; summary players have `score`, `charCount`)          |
+| `rematch:update`                           | `{ matchId, status: 'pending' \| 'accepted' \| 'expired' \| 'cancelled', requestedBy }`                                                                                                   |
+| `match:error`                              | `{ code, message }`: a match couldn't be created after pairing                                                                                                                            |
 
 Hidden test inputs, expected outputs, logs and errors never appear in any event or ack (the
 integration test scans all of them). The snapshot (`match:state`) also carries `category` and
@@ -705,18 +764,18 @@ fixed HTML, track rules), never the reference solution.
 
 ### Pages
 
-| Route                          | What it shows                                                                                                                                               |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (logged out)               | Landing page: hero with an animated mock duel, features, "how it works", live public stats, footer                                                          |
-| `/` (logged in)                | Play: pick ALGO or FRONTEND (+ optional track), ranked queue, private rooms, join by code, your ELO and W/L/D for the category                              |
-| `/problems`, `/practice/:slug` | Problem list with ALGO / FRONTEND tabs (`?category=`, track filter, track badges, best score) and the practice editor (frontend: Target / Editor / Preview) |
-| `/leaderboard`                 | ALGO / FRONTEND tabs (`?category=`). Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row                          |
-| `/u/:username`                 | Public profile with ALGO / FRONTEND tabs: stats, ELO history chart, solved by difficulty, match history with a mode filter                                  |
-| `/matches/:id`                 | Match details: summary, timeline, both final codes (participants only, after the match). FRONTEND: final previews (rendered) of both players                |
-| `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px: Problem / Editor / Results tabs (FRONTEND: Target / Editor / Preview)                                |
-| `/join/:code`                  | Invite link to a private room                                                                                                                               |
-| `/settings`                    | Change password, log out of all devices, default editor language                                                                                            |
-| anything else                  | 404 page (also for unknown players and matches)                                                                                                             |
+| Route                          | What it shows                                                                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (logged out)               | Landing page: hero with an animated mock duel, features, "how it works", live public stats, footer                                                                                          |
+| `/` (logged in)                | Play: pick ALGO, FRONTEND (+ optional track) or DEBUG, ranked queue (with "Play a ghost now" after 20 s), "Play vs ghost", private rooms, join by code, your ELO and W/L/D for the category |
+| `/problems`, `/practice/:slug` | Problem list with ALGO / FRONTEND tabs (`?category=`, track filter, track badges, best score) and the practice editor (frontend: Target / Editor / Preview)                                 |
+| `/leaderboard`                 | ALGO / FRONTEND tabs (`?category=`). Ranked players: top 3 highlighted, your row highlighted, pagination, a sticky "your rank" row                                                          |
+| `/u/:username`                 | Public profile with ALGO / FRONTEND tabs: stats, ELO history chart, solved by difficulty, match history with a mode filter                                                                  |
+| `/matches/:id`                 | Match details: summary, timeline, both final codes (participants only, after the match). FRONTEND: final previews (rendered) of both players                                                |
+| `/match/:id`                   | The live arena (focus mode: no navbar). Below 1024 px: Problem / Editor / Results tabs (FRONTEND: Target / Editor / Preview)                                                                |
+| `/join/:code`                  | Invite link to a private room                                                                                                                                                               |
+| `/settings`                    | Change password, log out of all devices, default editor language, ghost opt-out                                                                                                             |
+| anything else                  | 404 page (also for unknown players and matches)                                                                                                                                             |
 
 Every logged-in page except the arena has the navbar (Play, Practice, Leaderboard, My profile,
 Settings, the sound toggle, your ALGO · FRONTEND ELO, Log out; a menu button below 1024 px). Usernames link to profiles everywhere. All pages
@@ -727,15 +786,17 @@ work down to 375 px with no horizontal scrolling.
 All require the session cookie. Every endpoint below takes `?category=ALGO|FRONTEND` (default
 ALGO; for match history, no category means both) and returns the same shape for both categories.
 
-| Method | Path                                                                  | Returns                                                                                                                                                                                                                                                                                 |
-| ------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/leaderboard?page=&limit=`                                       | `{ page, limit, total, totalPages, entries: [{ rank, userId, username, elo, wins, losses, draws, gamesPlayed, winRate }], me }`. `limit` ≤ 50 (default 20). `me` is your row (with `onPage`), or `null` if you haven't played ranked.                                                   |
-| GET    | `/api/users/:username/profile`                                        | `{ profile: { username, elo, rank, bestElo, wins, losses, draws, gamesPlayed, winRate, currentStreak, longestWinStreak, favoriteLanguage, solved: { EASY, MEDIUM, HARD, total }, memberSince } }`                                                                                       |
-| GET    | `/api/users/:username/elo-history`                                    | `{ username, points: [{ matchId, date, elo, delta }] }`: starts at 1000 (account creation), then one point per finished ranked match                                                                                                                                                    |
-| GET    | `/api/users/:username/matches?page=&limit=&mode=all\|ranked\|private` | `{ page, limit, total, totalPages, matches: [{ id, mode, result, endReason, opponent: { username, elo }, problem: { title, slug, difficulty }, languages, passed, total, solveTimeMs, eloChange, date }] }`, finished matches, newest first                                             |
-| GET    | `/api/matches/:id`                                                    | `{ match: { mode, status, endReason, winnerId, problem, durationMs, players: [{ username, eloBefore, eloChange, eloAfter, passed, result, solveTimeMs }], timeline: [{ userId, offsetMs, language, status, passed, total }], code: { available, reason } } }`. **Never contains code.** |
-| GET    | `/api/matches/:id/code`                                               | `{ players: [{ userId, submission: { language, code, status, passed, total, createdAt } \| null }] }`: each player's **last** submission (FRONTEND: the **best** one, with `css`, `score`, `charCount`)                                                                                 |
-| GET    | `/api/matches/:id/preview/:userId.png`                                | FRONTEND: the player's best submission rendered by the renderer (PNG, cached). Any logged-in user, **only once the match is FINISHED** (403 `MATCH_NOT_FINISHED` before).                                                                                                               |
+| Method              | Path                                                                         | Returns                                                                                                                                                                                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET                 | `/api/leaderboard?page=&limit=`                                              | `{ page, limit, total, totalPages, entries: [{ rank, userId, username, elo, wins, losses, draws, gamesPlayed, winRate }], me }`. `limit` ≤ 50 (default 20). `me` is your row (with `onPage`), or `null` if you haven't played ranked.                                                   |
+| GET                 | `/api/users/:username/profile`                                               | `{ profile: { username, elo, rank, bestElo, wins, losses, draws, gamesPlayed, winRate, currentStreak, longestWinStreak, favoriteLanguage, solved: { EASY, MEDIUM, HARD, total }, memberSince } }`                                                                                       |
+| GET                 | `/api/users/:username/elo-history`                                           | `{ username, points: [{ matchId, date, elo, delta }] }`: starts at 1000 (account creation), then one point per finished ranked match                                                                                                                                                    |
+| GET                 | `/api/users/:username/matches?page=&limit=&mode=all\|ranked\|private\|ghost` | `{ page, limit, total, totalPages, matches: [{ id, mode, result, endReason, opponent: { username, elo }, problem: { title, slug, difficulty }, languages, passed, total, solveTimeMs, eloChange, date }] }`, finished matches, newest first                                             |
+| GET                 | `/api/matches/:id`                                                           | `{ match: { mode, status, endReason, winnerId, problem, durationMs, players: [{ username, eloBefore, eloChange, eloAfter, passed, result, solveTimeMs }], timeline: [{ userId, offsetMs, language, status, passed, total }], code: { available, reason } } }`. **Never contains code.** |
+| GET                 | `/api/matches/:id/code`                                                      | `{ players: [{ userId, submission: { language, code, status, passed, total, createdAt } \| null }] }`: each player's **last** submission (FRONTEND: the **best** one, with `css`, `score`, `charCount`)                                                                                 |
+| GET                 | `/api/matches/:id/preview/:userId.png`                                       | FRONTEND: the player's best submission rendered by the renderer (PNG, cached). Any logged-in user, **only once the match is FINISHED** (403 `MATCH_NOT_FINISHED` before).                                                                                                               |
+| GET                 | `/api/users/:username/opponents?category=`                                   | `{ username, category, vsPlayers: { wins, losses, draws, games }, vsGhosts: { … } }`: finished RANKED vs GHOST matches                                                                                                                                                                  |
+| POST / GET / DELETE | `/api/matches/:id/share`                                                     | Share link of **your** result card: see [Share cards](#share-cards)                                                                                                                                                                                                                     |
 
 Definitions:
 
@@ -748,6 +809,14 @@ Definitions:
   match (a draw ends it); the longest win streak is the longest run of wins.
 - **Favorite language:** the language with the most submissions (practice and matches) on problems
   of that category (for FRONTEND, the "language" is the track: `html`, `css`, `html_css`).
+- **Ghost matches** (mode `GHOST`) count in the rating, W/L/D, streaks and the ELO history of the
+  human (they are player 1; `player2Id` is null). Their history entries have
+  `opponent: { username, elo, ghost: { kind: 'ghost' | 'bot', … } }`; match details flag the
+  ghost/bot player the same way (`userId: 0`) and never return code for it. A ghost win is stored
+  as `winnerIsGhost` and reported as `winnerId: 0`. The ghost's real account never sees the replay
+  in its own history.
+- **DEBUG extras:** history entries of DEBUG matches have `category` and `linesChanged`; match
+  details add `linesChanged` per player and per timeline entry.
 - **FRONTEND extras:** match-history entries of FRONTEND matches also have `category`, `track` and
   `score` (the user's best score). Match details of a FRONTEND match add `category`, `track`,
   `canvas`, each player's `score` and `charCount`, the score of every timeline entry, and
@@ -776,11 +845,12 @@ createdAt)` for the leaderboard; `Match(player1Id, endedAt)` and `Match(player2I
 
 ## Settings and session revocation
 
-| Method | Path                        | Body                               | Success                                 | Errors        |
-| ------ | --------------------------- | ---------------------------------- | --------------------------------------- | ------------- |
-| POST   | `/api/settings/password`    | `{ currentPassword, newPassword }` | `200 { user }` + a fresh session cookie | 400, 401, 429 |
-| POST   | `/api/settings/logout-all`  | none                               | `204`, clears the cookie                | 401           |
-| PATCH  | `/api/settings/preferences` | `{ preferredLanguage }`            | `200 { user }`                          | 400, 401      |
+| Method | Path                                 | Body                                   | Success                                       | Errors        |
+| ------ | ------------------------------------ | -------------------------------------- | --------------------------------------------- | ------------- |
+| POST   | `/api/settings/password`             | `{ currentPassword, newPassword }`     | `200 { user }` + a fresh session cookie       | 400, 401, 429 |
+| POST   | `/api/settings/logout-all`           | none                                   | `204`, clears the cookie                      | 401           |
+| PATCH  | `/api/settings/preferences`          | `{ preferredLanguage?, allowGhosts? }` | `200 { user }`                                | 400, 401      |
+| POST   | `/api/settings/ghost-notice/dismiss` | none                                   | `200 { user }` (`ghostNoticeDismissed: true`) | 401           |
 
 - All three need the session cookie and are sent with `Cache-Control: no-store`.
 - **Password change:** a wrong `currentPassword` gives `400 INVALID_CURRENT_PASSWORD`. The new
@@ -874,7 +944,8 @@ It is cached in memory for 60 s (`services/stats.service.js`, 3 queries per refr
   into `og-image.png`.
 - `docs:capture` takes the landing screenshot, registers two demo accounts and plays three real
   ranked duels, recording the GIF during the first. It then captures the arena (desktop and
-  375 px), result, leaderboard, profile and practice screenshots.
+  375 px), result, leaderboard, profile and practice screenshots, frontend and debug practice, a
+  ghost duel (a replay of the other demo player's run) and the share card of the first match.
 - Requirements: Google Chrome (or `CHROME_PATH`), `ffmpeg` (GIF) and ImageMagick (`.ico`).
 - To type code into Monaco, the scripts use `window.__codeDuelEditor`, which only exists in
   development builds.
@@ -891,6 +962,9 @@ All endpoints require the session cookie.
 | POST   | `/api/practice/:slug/run`        | `{ language, code }`                                  | `{ result }`: sample tests only, full details (ALGO only)                                                                                                                   |
 | POST   | `/api/practice/:slug/submit`     | ALGO `{ language, code }`, FRONTEND `{ html?, css? }` | ALGO: `{ result, submission }`: all tests; saves a `Submission` (`matchId: null`). FRONTEND: `{ score, solved, threshold, charCount, diffImage, submission }`               |
 
+- DEBUG problems use the same endpoints as ALGO: `?category=DEBUG` lists them (items add
+  `bugCount`), `GET /api/problems/:slug` adds `category: 'DEBUG'` and `bugCount`, and its
+  `starterCode` is the buggy code. Run and submit responses add `linesChanged`.
 - `language`: `javascript` or `python`. `code`: 1 byte to 20 KB. A payload of the wrong category
   (e.g. `{ html }` for an ALGO problem) is a `400 WRONG_CATEGORY`.
 - `result`: `{ mode, status, passed, total, timeMs, memoryKb, compileError, tests }`. Sample tests
@@ -899,6 +973,158 @@ All endpoints require the session cookie.
   echo the hidden input). Hidden tests are never sent by `GET /api/problems/:slug` either.
 - Run and submit share a rate limit of **1 request per 3 seconds per user** (`429 RATE_LIMITED`).
 - `503 JUDGE_UNAVAILABLE` / `503 JUDGE_ERROR` if go-judge is down or fails (nothing is saved).
+
+## Debug category
+
+Both players get the same **buggy code** (JavaScript and Python versions) and the description of
+the expected behavior. The editor starts with the bug; "🐞 N bugs to fix" (1–3) is shown.
+
+- **Judging:** exactly like ALGO: function-style, the same harness, samples and hidden tests in
+  separate sandbox executions, hidden data never sent.
+- **Lines changed** (`server/src/services/debug/linesChanged.js`, mirrored in
+  `client/src/lib/linesChanged.js` for the live counter; a test checks they agree):
+  - a line diff against the buggy code (longest common subsequence);
+  - each hunk counts `max(lines removed, lines added)`: editing one line = 1, inserting one = 1,
+    replacing two lines with three = 3;
+  - trailing whitespace, CRLF and trailing blank lines are ignored; indentation counts.
+
+  It is shown live in the editor, in the results, in the opponent's progress and in match
+  details, and it is saved on each submission.
+
+- **Win:** the first to pass every test (`SOLVED`). **Timeout:** most tests passed → fewer lines
+  changed (of that best submission; a leaner resubmission with the same count replaces it) →
+  earlier submission → draw. Both at 0 tests → draw.
+- **Durations:** EASY 6 min, MEDIUM 10 min, HARD 15 min. Countdown, forfeit, the 30 s disconnect
+  grace, rematch, ranked and private work as for ALGO. Ranked updates the DEBUG rating only.
+
+The 10 seeded problems (`server/prisma/seed/debug/`):
+
+| Difficulty | Problem           | Bug(s)                                                                                            |
+| ---------- | ----------------- | ------------------------------------------------------------------------------------------------- |
+| Easy       | Last K Items      | off-by-one in a slice                                                                             |
+| Easy       | Passing Grades    | `>` instead of `>=`                                                                               |
+| Easy       | Average Rating    | integer division (`//`, `Math.floor`) instead of float division                                   |
+| Easy       | First Occurrences | state shared between calls: Python mutable default argument (`seen=set()`), JS module-level `Set` |
+| Medium     | Out of Place      | sorting mutates and aliases the input                                                             |
+| Medium     | Top Three Scores  | numbers sorted as strings (JS default `sort()`, Python `key=str`)                                 |
+| Medium     | Pairs With Sum    | wrong inner loop bounds                                                                           |
+| Medium     | Exact Budget      | float equality (`0.1 + 0.2 === 0.3`)                                                              |
+| Hard       | Longest Streak    | variable shadowing (JS block `let`, Python shadows `max`) + off-by-one (2 bugs)                   |
+| Hard       | Nested Sum        | missing `return` in a helper + a loop that skips the first element (2 bugs)                       |
+
+`npm run db:seed` verifies through go-judge, in both languages, that each **buggy** version fails at
+least one sample test **and** at least one hidden test (run as two executions, like a real
+submission), and that each **fixed** reference passes every test. Otherwise nothing is written.
+
+## Ghost and bot opponents
+
+When nobody is around, race a **ghost**: a replay of a real player's past **ranked** run on a
+problem. No code is ever replayed or shown, only progress.
+
+- **Where:**
+  - **The ranked queue:** after 20 s of waiting, `queue:status` carries `ghostOffer: true` and the
+    client offers "Play a ghost now". The player keeps queueing until they accept; accepting leaves
+    the queue.
+  - **Home:** a "Play vs ghost" button for the selected category (and FRONTEND track).
+  - **The result dialog:** "Play another ghost".
+- **Selection** (`services/match/ghosts.js`, `matchRepository.findGhostRuns`):
+  - finished RANKED matches of the same category (and FRONTEND track), never PRIVATE or GHOST
+    matches;
+  - never the player's own runs, only players with "Allow my ranked runs to be used as ghosts" on,
+    and only runs with at least one submission;
+  - the ghost's rating at that time within **±200** of the player's, widened to ±400, ±800, then
+    any rating;
+  - when a window has both solved and unsolved runs, each is picked with equal chance.
+- **Replay:** the run's submissions become events at their recorded offsets from the start of the
+  original match, using tests passed / total, the best score % for FRONTEND, and lines changed for
+  DEBUG. Server timers fire them during the match. Each event sends `opponent:progress` like a
+  real submission. The ghost "solves" at its recorded time and wins if the human hasn't solved
+  yet. On timeout, the human is compared with the ghost's final progress using the category's
+  normal rules. Leaving is a forfeit; a disconnect past the 30 s grace is a loss.
+- **Bots:** when there is no ghost run at all (e.g. a fresh database), one of 4 bots with fixed
+  ratings plays a synthetic run from a difficulty profile. Stronger bots solve more often and
+  sooner, and harder problems lower both. The closest bot to the player's rating is picked.
+
+  | Bot     | Rating |
+  | ------- | ------ |
+  | Byte    | 900    |
+  | Pixel   | 1100   |
+  | Vector  | 1300   |
+  | Quantum | 1500   |
+
+- **Rating:** mode `GHOST`, **K = 16**, computed against the ghost's rating at that time (or the
+  bot's fixed rating). Only the human's rating changes; the ghost's real account is never touched.
+  Ghost matches count in W/L/D, streaks and the ELO history; the profile shows a "vs players / vs
+  ghosts" breakdown (`GET /api/users/:username/opponents`).
+- **Honesty:**
+  - every payload (`match:found` `mode: 'GHOST'`, snapshot, `match:start`, `match:end`, history,
+    match details) carries `ghost: { kind: 'ghost', username, rating, replayOf, … }` or
+    `{ kind: 'bot', id, name, rating }`;
+  - the UI always shows "👻 Ghost of @username (replay from <date>)" or "🤖 Bot <name>" with a
+    **replay** badge;
+  - there is no typing indicator and no online/offline state for a replay; bots never link to a
+    profile.
+- **Privacy:** Settings → "Allow my ranked runs to be used as ghosts" (`User.allowGhosts`,
+  default ON, `PATCH /api/settings/preferences { allowGhosts }`). A ghost shows the original
+  player's username, rating at that time and progress, never their code. Private matches are
+  never used.
+- **Telling players:** the register page says that ranked runs may be replayed as ghosts (its
+  "Settings" link opens Settings right after signup). Accounts created before ghosts existed see a
+  one-time banner on Home until they dismiss it. The dismissal is stored on the account
+  (`User.ghostNoticeDismissedAt`, `POST /api/settings/ghost-notice/dismiss`, idempotent), so it
+  doesn't come back on other devices; new accounts start dismissed.
+
+## Share cards
+
+Players of a FINISHED match can share their result as an image card with a public link.
+
+| Method | Path                                            | Auth                        | Returns                                                                                                                                                                                         |
+| ------ | ----------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/matches/:id/share`                        | participants, FINISHED only | `201 { share: { shareId, url, cards: { og, story }, createdAt } }`: one link per user per match (the same one on repeat calls), the OG card is pre-rendered. Rate limit: 10 per 10 min per user |
+| GET    | `/api/matches/:id/share`                        | participants                | `{ share }` or `{ share: null }`                                                                                                                                                                |
+| DELETE | `/api/matches/:id/share`                        | participants                | `204`: revoked; the old links 404 from now on (a new share gets a new id)                                                                                                                       |
+| GET    | `/s/:shareId`                                   | **public**                  | HTML page with Open Graph + Twitter tags (absolute URLs from `APP_URL`), the card and a "Play Code Duel" button                                                                                 |
+| GET    | `/api/share/:shareId/card.png?format=og\|story` | **public**                  | PNG, 1200×630 (`og`, link previews) or 1080×1920 (`story`)                                                                                                                                      |
+
+- **Unguessable ids:** 128 random bits, base64url (22 characters). Unknown or revoked ids → 404.
+  Public responses are `no-cache`, so a revoked link stops working at once. Public routes are
+  rate-limited per IP (120 per minute).
+- **Rendering:** a trusted server-side template (`services/share/cardTemplate.js`) rendered by the
+  renderer service. It is self-contained: renderer fonts (DejaVu) only and an inline SVG logo,
+  with **every piece of user content escaped**. Cards are cached on disk in
+  `server/data/cards/<shareId>-<format>.png` (gitignored) and regenerated when missing, with one
+  render at a time per card. A render takes **~0.4–0.5 s**; a cached card is served in a few ms.
+- **Content**, from the sharer's point of view:
+  - the wordmark, mode, category, problem and difficulty;
+  - both players (username, rating, a GHOST · REPLAY / BOT badge);
+  - VICTORY / DEFEAT / DRAW and the end reason;
+  - solve time, tests passed (+ lines changed for DEBUG) or best score % (FRONTEND);
+  - the rating change, the date and the app URL.
+
+  **Never code and never test data.**
+
+- **Client:** "Share" in the result dialog and on match details opens a modal with:
+  - the card preview;
+  - **Share…** (Web Share API with the PNG file + link; works on iPhone Safari, the PNG is
+    prefetched so the share runs inside the click);
+  - **Copy link**, **WhatsApp** (`wa.me`), and downloads in both formats.
+
+  Match details also shows the current link and **Revoke link**.
+
+- In development Vite proxies `/s/*` to Express. Set `APP_URL` to the public origin in
+  production, so link previews get absolute URLs.
+
+## Adding a debug problem
+
+1. Add `server/prisma/seed/debug/<slug>.js`:
+   - `slug`, `title`, `difficulty`, `bugCount` (1–3), `timeLimitMs`, `functionName`;
+   - a markdown `description` of the **expected** behavior (and a hint of the symptom);
+   - `buggy` and `fixed` code for `javascript` and `python`;
+   - `tests`: 2 samples first, then at least 6 hidden tests.
+2. Make sure the bug shows up in **both** a sample and a hidden test. Note that samples and
+   hidden tests run in separate executions, so state leaking between calls resets between them.
+3. Register it in `server/prisma/seed/debug/index.js` and run `npm run db:seed`. The seed refuses
+   to write anything unless every buggy version fails and every fix passes, in both languages.
 
 ## Frontend category
 
@@ -1094,7 +1320,8 @@ Errors are `{ error: { code, message } }`:
    (served from memory); `data:` URIs never hit the network. The document also has a strict
    `Content-Security-Policy` header, and Chromium runs with a black-hole proxy.
 4. **Limits:** 5 s per render (the page's context is closed on timeout), at most **2 pages** at a
-   time with a FIFO queue (max 32 waiting, then `503 RENDERER_BUSY`), code ≤ 20 KB, body ≤ 2 MB.
+   time with a FIFO queue (max 32 waiting, then `503 RENDERER_BUSY`), code ≤ 20 KB, body ≤ 2 MB,
+   canvas sides ≤ 1920 px (the 1080×1920 share story cards).
 5. **Container** (`infra/docker-compose.yml`):
    - published on **127.0.0.1:5070 only**;
    - read-only root filesystem with a 256 MB `/tmp` tmpfs;
@@ -1174,6 +1401,7 @@ code-duel/
 │       │   ├── layout/        # AppLayout, Navbar, ConnectionBanner
 │       │   ├── practice/      # CodeEditor (Monaco), ResultsPanel, ProblemStatement, LanguageSelect
 │       │   ├── frontend/      # FRONTEND: workspace (Target / Editor / Preview), TargetPanel, Palette, PreviewCompare, FrontendEditor, ScoreResult
+│       │   ├── match/ …       # also GhostName (honest ghost/bot label), ShareModal
 │       │   ├── match/         # timer, player progress, countdown, result modal, confetti
 │       │   └── profile/       # EloChart (hand-written SVG)
 │       ├── hooks/             # useApi, useApiForm, useReducedMotion, useSocketLifecycle, usePlaySession, …
@@ -1187,7 +1415,7 @@ code-duel/
 │   ├── prisma/
 │   │   ├── schema.prisma      # User, UserRating, Problem, TestCase, Match, Submission
 │   │   ├── migrations/
-│   │   └── seed/              # npm run db:seed: problems/, solutions/, naive/, verify.js; frontend/ + frontendVerify.js
+│   │   └── seed/              # npm run db:seed: problems/, solutions/, naive/, verify.js; frontend/ + frontendVerify.js; debug/ + debugVerify.js
 │   ├── prisma.config.js       # Prisma 7 config (schema path, DATABASE_URL)
 │   ├── vitest.config.js
 │   ├── data/targets/          # FRONTEND target PNGs, generated by the seed (gitignored)
@@ -1199,10 +1427,12 @@ code-duel/
 │       ├── middleware/        # errorHandler, notFound, requireAuth, rateLimit, validate
 │       ├── socket/            # Socket.io setup, cookie auth, handlers/ (queue, room, match)
 │       ├── services/          # auth, problem, practice, elo, leaderboard, profile, matchDetails, stats
+│       │   ├── debug/         # linesChanged (line diff vs the buggy code)
+│       │   ├── share/         # share links, card template, public page, disk-cached card rendering
 │       │   ├── judge/         # provider-agnostic judge: evaluate, compare, harness/, providers/
 │       │   ├── renderer/      # provider-style client for the renderer service (providers/playwright.js)
 │       │   ├── frontend/      # track rules, scoring, target images, public brief, practice flow
-│       │   └── match/         # MatchManager, matchmaker, problemPicker, roomCodes, matchRepository
+│       │   └── match/         # MatchManager, matchmaker, ghosts (selection, replay, bots), problemPicker, roomCodes, matchRepository
 │       ├── validators/        # Zod request schemas
 │       ├── lib/               # prisma, jwt, authCookie, publicUser, ratings, errors, sessionEvents
 │       ├── generated/prisma/  # generated Prisma client (gitignored)

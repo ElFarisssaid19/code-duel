@@ -63,5 +63,12 @@ export const useAuthStore = create((set) => ({
     return user;
   },
 
+  /** Dismisses the one-time ghost replay banner (stored on the account, so on every device). */
+  async dismissGhostNotice() {
+    const { user } = await api.post('/settings/ghost-notice/dismiss');
+    set({ user });
+    return user;
+  },
+
   setNotice: (notice) => set({ notice }),
 }));

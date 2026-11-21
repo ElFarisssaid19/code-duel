@@ -3,6 +3,8 @@
  *
  * ALGO: every reference solution (solutions/<slug>.{js,py}) is run through the real judge
  * against ALL of its problem's tests.
+ * DEBUG: in both languages, the buggy code must fail at least one sample and one hidden test,
+ * and the fixed reference must pass every test.
  * FRONTEND: every reference solution is rendered by the renderer service into the problem's
  * target image (<DATA_DIR>/targets/<slug>.png) and must score 100.00 against it, while an empty
  * page and the starter code must score clearly lower.
@@ -12,6 +14,8 @@ import { prisma } from '../../src/lib/prisma.js';
 import { targetImagePathFor, writeTarget } from '../../src/services/frontend/targets.js';
 import { judgeHealth } from '../../src/services/judge/index.js';
 import { rendererHealth } from '../../src/services/renderer/index.js';
+import debugProblems from './debug/index.js';
+import { debugProblemData, validateDebugProblem, verifyDebugProblem } from './debugVerify.js';
 import frontendProblems from './frontend/index.js';
 import {
   buildAndVerifyTarget,
@@ -63,13 +67,36 @@ async function upsertFrontendProblem(problem) {
   });
 }
 
+async function upsertDebugProblem(problem) {
+  const data = debugProblemData(problem);
+  await prisma.$transaction(async (tx) => {
+    const { id } = await tx.problem.upsert({
+      where: { slug: problem.slug },
+      create: { slug: problem.slug, ...data },
+      update: data,
+      select: { id: true },
+    });
+    await tx.testCase.deleteMany({ where: { problemId: id } });
+    await tx.testCase.createMany({
+      data: problem.tests.map((t, order) => ({
+        problemId: id,
+        order,
+        input: t.input,
+        expectedOutput: t.expected,
+        isHidden: Boolean(t.hidden),
+      })),
+    });
+  });
+}
+
 async function main() {
   const invalid = [
     ...problems.flatMap((p) => validateProblem(p).map((e) => `${p.slug}: ${e}`)),
     ...frontendProblems.flatMap((p) => validateFrontendProblem(p).map((e) => `${p.slug}: ${e}`)),
+    ...debugProblems.flatMap((p) => validateDebugProblem(p).map((e) => `${p.slug}: ${e}`)),
   ];
   if (invalid.length) throw new Error(`Invalid problem definitions:\n- ${invalid.join('\n- ')}`);
-  const slugs = [...problems, ...frontendProblems].map((p) => p.slug);
+  const slugs = [...problems, ...frontendProblems, ...debugProblems].map((p) => p.slug);
   const duplicate = slugs.find((slug, i) => slugs.indexOf(slug) !== i);
   if (duplicate) throw new Error(`Duplicate problem slug: ${duplicate}`);
 
@@ -91,6 +118,21 @@ async function main() {
     }
   }
 
+  console.log(
+    `\nVerifying ${debugProblems.length} debug problems (buggy must fail, fixed must pass)…`,
+  );
+  for (const problem of debugProblems) {
+    const { failures: problemFailures, report } = await verifyDebugProblem(problem);
+    console.log(`${problem.slug} (${problem.bugCount} bug${problem.bugCount > 1 ? 's' : ''})`);
+    for (const r of report) {
+      console.log(
+        `  ${r.language.padEnd(10)} buggy samples ${r.buggy.samples} hidden ${r.buggy.hidden}` +
+          `   fixed samples ${r.fixed.samples} hidden ${r.fixed.hidden}`,
+      );
+    }
+    for (const failure of problemFailures) failures.push(`${problem.slug} / ${failure}`);
+  }
+
   console.log(`\nRendering and verifying ${frontendProblems.length} frontend targets…`);
   const targets = new Map();
   for (const problem of frontendProblems) {
@@ -108,12 +150,14 @@ async function main() {
   }
 
   for (const problem of problems) await upsertProblem(problem);
+  for (const problem of debugProblems) await upsertDebugProblem(problem);
   for (const problem of frontendProblems) {
     await writeTarget(targetImagePathFor(problem.slug), targets.get(problem.slug));
     await upsertFrontendProblem(problem);
   }
   console.log(
     `\n✔ Seeded ${problems.length} algorithm problems (all reference solutions passed) and ` +
+      `${debugProblems.length} debug problems (buggy versions fail, fixes pass) and ` +
       `${frontendProblems.length} frontend problems (all references score 100.00).`,
   );
 }

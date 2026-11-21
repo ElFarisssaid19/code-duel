@@ -58,10 +58,17 @@ export function makeFrontendProblem(overrides = {}) {
 }
 
 /**
- * Users: { id, username, elo (ALGO), frontend?: { elo, … } }. getUser/listProblemCandidates/
- * finishMatch follow the category like the real repository.
+ * Users: { id, username, elo (ALGO), frontend?: { elo, … }, debug?: { elo, … } }.
+ * getUser/listProblemCandidates/finishMatch follow the category like the real repository.
+ * ghostRuns: what findGhostRuns returns (filtered by category and excludeUserId, like the real
+ * query); runSubmissions: { [`${matchId}:${userId}`]: [submissions] } for loadRunSubmissions.
  */
-export function createFakeRepo({ users, problems = [makeProblem()] }) {
+export function createFakeRepo({
+  users,
+  problems = [makeProblem()],
+  ghostRuns = [],
+  runSubmissions = {},
+}) {
   const userMap = new Map(
     users.map((u) => [
       u.id,
@@ -71,10 +78,12 @@ export function createFakeRepo({ users, problems = [makeProblem()] }) {
         draws: 0,
         ...u,
         frontend: { elo: 1000, wins: 0, losses: 0, draws: 0, ...u.frontend },
+        debug: { elo: 1000, wins: 0, losses: 0, draws: 0, ...u.debug },
       },
     ]),
   );
-  const ratingOf = (u, category) => (category === 'FRONTEND' ? u.frontend : u);
+  const ratingOf = (u, category) =>
+    category === 'FRONTEND' ? u.frontend : category === 'DEBUG' ? u.debug : u;
   const matches = new Map();
   const submissions = [];
   let nextId = 100;
@@ -113,6 +122,12 @@ export function createFakeRepo({ users, problems = [makeProblem()] }) {
       submissions.push(data);
       return { id: submissions.length, createdAt: new Date() };
     },
+    findGhostRuns: vi.fn(async ({ category, excludeUserId }) =>
+      ghostRuns.filter((r) => (r.category ?? 'ALGO') === category && r.userId !== excludeUserId),
+    ),
+    loadRunSubmissions: vi.fn(
+      async (matchId, userId) => runSubmissions[`${matchId}:${userId}`] ?? [],
+    ),
     getMatch: async () => null,
     cancelStaleMatches: vi.fn(async () => ({ count: 0 })),
   };

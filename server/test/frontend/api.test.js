@@ -241,12 +241,13 @@ describe('category-aware leaderboard and profile', () => {
     });
   });
 
-  it('a new user has 1000 in both categories', async () => {
+  it('a new user has 1000 in every category', async () => {
     expect(me.ratings).toEqual({
       ALGO: { elo: 1000, wins: 0, losses: 0, draws: 0, bestElo: 1000 },
       FRONTEND: { elo: 1000, wins: 0, losses: 0, draws: 0, bestElo: 1000 },
+      DEBUG: { elo: 1000, wins: 0, losses: 0, draws: 0, bestElo: 1000 },
     });
-    expect(await prisma.userRating.count({ where: { userId: me.id } })).toBe(2);
+    expect(await prisma.userRating.count({ where: { userId: me.id } })).toBe(3);
   });
 });
 

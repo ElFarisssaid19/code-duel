@@ -41,16 +41,20 @@ enum MatchStatus {
 }
 
 /// RANKED: matchmaking queue, updates ELO. PRIVATE: room code / invite link, unranked.
+/// GHOST: against a replay of a past ranked run (or a bot); only the human's rating changes (K=16).
 enum MatchMode {
   RANKED
   PRIVATE
+  GHOST
 }
 
 /// ALGO: function-style algorithm problems judged by go-judge. FRONTEND: reproduce a target
-/// image with HTML/CSS, scored by pixel comparison (renderer service).
+/// image with HTML/CSS, scored by pixel comparison (renderer service). DEBUG: fix buggy code
+/// (same judge and harness as ALGO).
 enum Category {
   ALGO
   FRONTEND
+  DEBUG
 }
 
 /// FRONTEND tracks. HTML: HTML only, no CSS. CSS: fixed HTML, write CSS only. HTML_CSS: both.
@@ -69,21 +73,28 @@ enum MatchEndReason {
 }
 
 model User {
-  id                Int      @id @default(autoincrement())
-  username          String   @unique @db.VarChar(32)
-  email             String   @unique @db.VarChar(255)
-  passwordHash      String   @db.VarChar(255)
+  id                     Int       @id @default(autoincrement())
+  username               String    @unique @db.VarChar(32)
+  email                  String    @unique @db.VarChar(255)
+  passwordHash           String    @db.VarChar(255)
   /// Incremented to revoke every session (password change, "log out of all devices").
   /// Embedded in the JWT; tokens with an older version are rejected.
-  tokenVersion      Int      @default(0)
+  tokenVersion           Int       @default(0)
   /// Default editor language for practice and duels
-  preferredLanguage String   @default("javascript") @db.VarChar(16)
-  createdAt         DateTime @default(now())
+  preferredLanguage      String    @default("javascript") @db.VarChar(16)
+  /// Whether this user's ranked runs may be replayed as ghosts for other players
+  allowGhosts            Boolean   @default(true)
+  /// When the user dismissed the "your ranked runs may be replayed as ghosts" notice (null = not
+  /// yet: Home shows a one-time banner). Set at registration, where the notice is shown.
+  ghostNoticeDismissedAt DateTime?
+  createdAt              DateTime  @default(now())
 
   matchesAsPlayer1 Match[]      @relation("MatchPlayer1")
   matchesAsPlayer2 Match[]      @relation("MatchPlayer2")
   matchesWon       Match[]      @relation("MatchWinner")
+  ghostMatches     Match[]      @relation("MatchGhost")
   submissions      Submission[]
+  shares           MatchShare[]
   /// One rating per category (ALGO, FRONTEND). A missing row means the defaults (1000, 0/0/0).
   ratings          UserRating[]
 }
@@ -115,8 +126,11 @@ model Problem {
   difficulty   Difficulty
   category     Category   @default(ALGO)
   /// ALGO: per-language starter code { "javascript": "...", "python": "..." }.
+  /// DEBUG: the buggy code per language (the editor starts with it; lines changed are counted from it).
   /// FRONTEND: { "html": "...", "css": "..." }.
   starterCode  Json
+  /// DEBUG: number of bugs to fix (1-3)
+  bugCount     Int?
   /// ALGO: per-language name of the function the harness calls: { "javascript": "twoSum", "python": "two_sum" }.
   /// null for FRONTEND problems.
   functionName Json?
@@ -174,7 +188,8 @@ model Match {
   /// Private room code (null for ranked matches)
   roomCode   String?         @db.VarChar(6)
   player1Id  Int
-  player2Id  Int
+  /// null for GHOST matches (the opponent is a replay or a bot, not a participant)
+  player2Id  Int?
   problemId  Int
   /// null on a draw or while the match isn't finished
   winnerId   Int?
@@ -199,6 +214,17 @@ model Match {
   player2Score     Decimal?  @db.Decimal(5, 2)
   player1Chars     Int?
   player2Chars     Int?
+  /// DEBUG: lines changed (vs the buggy code) of each player's best submission (timeout tiebreak)
+  player1Lines     Int?
+  player2Lines     Int?
+
+  /// GHOST mode: whose past ranked run is replayed (null for a bot), which match it came from,
+  /// or which bot played. player2Elo is the ghost's rating at that time (or the bot's rating).
+  ghostUserId        Int?
+  ghostSourceMatchId Int?
+  botId              String? @db.VarChar(32)
+  /// GHOST mode: the ghost/bot won (winnerId can only point to real users)
+  winnerIsGhost      Boolean @default(false)
 
   createdAt DateTime  @default(now())
   startedAt DateTime?
@@ -206,11 +232,16 @@ model Match {
   endedAt   DateTime?
 
   // Match history is kept: users/problems with matches cannot be deleted.
-  player1     User         @relation("MatchPlayer1", fields: [player1Id], references: [id], onDelete: Restrict)
-  player2     User         @relation("MatchPlayer2", fields: [player2Id], references: [id], onDelete: Restrict)
-  winner      User?        @relation("MatchWinner", fields: [winnerId], references: [id], onDelete: SetNull)
-  problem     Problem      @relation(fields: [problemId], references: [id], onDelete: Restrict)
-  submissions Submission[]
+  player1          User         @relation("MatchPlayer1", fields: [player1Id], references: [id], onDelete: Restrict)
+  player2          User?        @relation("MatchPlayer2", fields: [player2Id], references: [id], onDelete: Restrict)
+  ghostUser        User?        @relation("MatchGhost", fields: [ghostUserId], references: [id], onDelete: SetNull)
+  /// GHOST mode: the ranked match whose run is replayed (its date is shown as "replay from …")
+  ghostSourceMatch Match?       @relation("GhostSource", fields: [ghostSourceMatchId], references: [id], onDelete: SetNull)
+  ghostReplays     Match[]      @relation("GhostSource")
+  winner           User?        @relation("MatchWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  problem          Problem      @relation(fields: [problemId], references: [id], onDelete: Restrict)
+  submissions      Submission[]
+  shares           MatchShare[]
 
   @@index([player1Id, createdAt])
   @@index([player2Id, createdAt])
@@ -220,30 +251,35 @@ model Match {
   @@index([problemId])
   @@index([winnerId])
   @@index([status])
+  /// Ghost candidates: finished ranked runs per category
+  @@index([mode, status, category])
+  @@index([ghostUserId])
 }
 
 model Submission {
-  id        Int              @id @default(autoincrement())
+  id           Int              @id @default(autoincrement())
   /// null for solo practice submissions
-  matchId   Int?
-  userId    Int
-  problemId Int
+  matchId      Int?
+  userId       Int
+  problemId    Int
   /// ALGO: javascript | python. FRONTEND: html | css | html_css (the track).
-  language  String           @db.VarChar(32)
+  language     String           @db.VarChar(32)
   /// ALGO: the source code. FRONTEND: the player's HTML ("" for the CSS track).
-  code      String           @db.Text
+  code         String           @db.Text
   /// FRONTEND: the player's CSS ("" for the HTML track); null for ALGO
-  css       String?          @db.Text
-  status    SubmissionStatus
-  passed    Int              @default(0)
-  total     Int              @default(0)
+  css          String?          @db.Text
+  status       SubmissionStatus
+  passed       Int              @default(0)
+  total        Int              @default(0)
   /// CPU time of the whole run (ALGO)
-  timeMs    Int?
+  timeMs       Int?
   /// FRONTEND: pixel score 0-100 (null for ALGO)
-  score     Decimal?         @db.Decimal(5, 2)
+  score        Decimal?         @db.Decimal(5, 2)
   /// FRONTEND: non-whitespace characters written by the player (timeout tiebreak)
-  charCount Int?
-  createdAt DateTime         @default(now())
+  charCount    Int?
+  /// DEBUG: lines changed compared to the buggy code (timeout tiebreak)
+  linesChanged Int?
+  createdAt    DateTime         @default(now())
 
   match   Match?  @relation(fields: [matchId], references: [id], onDelete: SetNull)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -254,4 +290,21 @@ model Submission {
   @@index([matchId, userId, createdAt])
   @@index([userId, problemId])
   @@index([problemId])
+}
+
+/// A public share link for one player's result card of a finished match (one per user per match).
+/// Deleting the row revokes the link (GET /s/:shareId → 404).
+model MatchShare {
+  id        Int      @id @default(autoincrement())
+  /// Unguessable public id (128 random bits, base64url)
+  shareId   String   @unique @db.VarChar(32)
+  matchId   Int
+  userId    Int
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([userId])
 }

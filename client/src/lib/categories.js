@@ -2,9 +2,10 @@
 export const CATEGORIES = [
   { id: 'ALGO', label: 'Algorithms', short: 'Algo' },
   { id: 'FRONTEND', label: 'Frontend', short: 'Front' },
+  { id: 'DEBUG', label: 'Debug', short: 'Debug' },
 ];
 
-export const CATEGORY_LABELS = { ALGO: 'Algorithms', FRONTEND: 'Frontend' };
+export const CATEGORY_LABELS = { ALGO: 'Algorithms', FRONTEND: 'Frontend', DEBUG: 'Debug' };
 
 export const TRACKS = [
   { id: 'HTML', label: 'HTML' },
@@ -23,6 +24,12 @@ export const LANGUAGE_LABELS = {
   html_css: 'HTML + CSS',
 };
 
-export const isCategory = (value) => value === 'ALGO' || value === 'FRONTEND';
+export const isCategory = (value) => CATEGORIES.some((c) => c.id === value);
 
 export const formatScore = (score) => `${Number(score ?? 0).toFixed(2)}%`;
+
+/** "1 bug" / "3 bugs" */
+export const bugsLabel = (n) => `${n} bug${n === 1 ? '' : 's'}`;
+
+/** "1 line" / "3 lines" */
+export const linesLabel = (n) => `${n} line${n === 1 ? '' : 's'}`;

@@ -14,6 +14,7 @@
  * publicProblem(), toPublicResult() and counts ever go into events or acks. For FRONTEND
  * matches, an opponent only ever sees scores, never code or previews.
  */
+import { linesChanged } from '../debug/linesChanged.js';
 import { calculateEloChange } from '../elo.js';
 import { publicFrontendProblem } from '../frontend/publicProblem.js';
 import { scoreFrontendSubmission } from '../frontend/scoring.js';
@@ -22,6 +23,15 @@ import { JudgeUnavailableError, STATUS } from '../judge/index.js';
 import { RendererUnavailableError, RenderFailedError } from '../renderer/index.js';
 import { toPublicResult } from '../judge/publicResult.js';
 import { MatchError } from './errors.js';
+import {
+  archivedGhost,
+  botTimeline,
+  GHOST_K_FACTOR,
+  GHOST_PLAYER_ID,
+  ghostTimeline,
+  pickBot,
+  selectGhostRun,
+} from './ghosts.js';
 import { Matchmaker } from './matchmaker.js';
 import {
   chooseProblem,
@@ -46,6 +56,10 @@ export const DEFAULT_MATCH_CONFIG = Object.freeze({
   execCooldownMs: 3000,
   activityThrottleMs: 1000,
   durationsMs: { EASY: 10 * MINUTE, MEDIUM: 15 * MINUTE, HARD: 20 * MINUTE },
+  /** In the ranked queue, offer "Play a ghost now" after this long. */
+  ghostOfferAfterMs: 20_000,
+  /** DEBUG matches are shorter: fixing bugs, not writing a solution. */
+  debugDurationsMs: { EASY: 6 * MINUTE, MEDIUM: 10 * MINUTE, HARD: 15 * MINUTE },
 });
 
 const LIVE = new Set(['WAITING', 'COUNTDOWN', 'ACTIVE']);
@@ -76,7 +90,10 @@ export class MatchManager {
     this.repo = repo;
     this.judge = judge;
     this.scoreFrontend = scoreFrontend;
-    this.notify = notify;
+    // Ghosts and bots are not connected users: nothing is ever sent "to" them.
+    this.notify = (userId, event, payload) => {
+      if (userId !== GHOST_PLAYER_ID) notify(userId, event, payload);
+    };
     this.config = { ...DEFAULT_MATCH_CONFIG, ...config };
     this.random = random;
 
@@ -87,7 +104,11 @@ export class MatchManager {
     this.matchmaker = new Matchmaker({
       onPair: (a, b) => this.#onPair(a, b),
       onStatus: (entry, status) =>
-        this.notify(entry.userId, 'queue:status', { status: 'searching', ...status }),
+        this.notify(entry.userId, 'queue:status', {
+          status: 'searching',
+          ...status,
+          ghostOffer: status.elapsedMs >= this.config.ghostOfferAfterMs,
+        }),
       ...matchmakerOptions,
     });
   }
@@ -100,11 +121,13 @@ export class MatchManager {
     const presence = this.presence.get(userId);
     if (!presence) return { type: 'idle' };
     if (presence.type === 'queue') {
+      const status = this.matchmaker.status(userId);
       return {
         type: 'queue',
         category: presence.category,
         track: presence.track,
-        ...this.matchmaker.status(userId),
+        ...status,
+        ghostOffer: (status?.elapsedMs ?? 0) >= this.config.ghostOfferAfterMs,
       };
     }
     if (presence.type === 'room')
@@ -163,6 +186,166 @@ export class MatchManager {
     }).catch((err) => {
       this.#reportBackgroundError('ranked match creation failed', err, [a.userId, b.userId]);
     });
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Ghost / bot matches
+
+  /**
+   * Starts a GHOST match: a replay of another player's past ranked run in this category (rating
+   * within ±200, widened if needed), or a bot when there is no run at all. Works from the ranked
+   * queue too (the player leaves the queue). Only the human's rating changes (K=16).
+   */
+  async startGhost(userId, { category = 'ALGO', track = null } = {}) {
+    if (this.presence.get(userId)?.type === 'queue') this.leaveQueue(userId);
+    this.#assertIdle(userId);
+    this.presence.set(userId, { type: 'match', matchId: null }); // reserved while we hit the DB
+    try {
+      const user = await this.repo.getUser(userId, category);
+      if (!user) throw new MatchError('NOT_FOUND', 'User not found');
+      this.#cancelOffersFor(userId);
+      const runs = await this.repo.findGhostRuns({ category, track, excludeUserId: userId });
+      const run = selectGhostRun(runs, { elo: user.elo, random: this.random });
+      const match = run
+        ? await this.#createGhostMatch({ user, category, track, run })
+        : await this.#createBotMatch({ user, category, track });
+      return { matchId: match.id, mode: 'GHOST', ghost: match.players[1].ghost };
+    } catch (err) {
+      if (this.presence.get(userId)?.matchId === null) this.presence.delete(userId);
+      throw err;
+    }
+  }
+
+  async #createGhostMatch({ user, category, track, run }) {
+    const problem = await this.repo.loadProblem(run.problemId);
+    const durationMs = this.#durationOf(category, problem);
+    const submissions = await this.repo.loadRunSubmissions(run.matchId, run.userId);
+    const ghost = {
+      kind: 'ghost',
+      userId: run.userId,
+      username: run.username,
+      rating: run.elo,
+      replayOf: run.endedAt ? new Date(run.endedAt).toISOString() : null,
+      sourceMatchId: run.matchId,
+    };
+    const timeline = ghostTimeline(submissions, {
+      startedAt: run.startedAt,
+      durationMs,
+      category,
+    });
+    return this.#openGhostMatch({ user, category, track, problem, durationMs, ghost, timeline });
+  }
+
+  async #createBotMatch({ user, category, track }) {
+    const [candidates, recentIds] = await Promise.all([
+      this.repo.listProblemCandidates({ category, track }),
+      this.repo.recentProblemIds([user.id], RECENT_MATCHES),
+    ]);
+    const picked = chooseProblem({
+      candidates,
+      difficulties: rankedDifficulties(user.elo),
+      recentIds,
+      random: this.random,
+    });
+    if (!picked) throw new MatchError('NO_PROBLEMS', 'There are no problems in this category yet.');
+    const problem = await this.repo.loadProblem(picked.id);
+    const durationMs = this.#durationOf(category, problem);
+    const bot = pickBot(user.elo);
+    const ghost = { kind: 'bot', id: bot.id, name: bot.name, rating: bot.rating };
+    const timeline = botTimeline({
+      bot,
+      category,
+      difficulty: problem.difficulty,
+      durationMs,
+      testCount: category === 'FRONTEND' ? 1 : problem.tests.length,
+      threshold: category === 'FRONTEND' ? thresholdOfProblem(problem) : undefined,
+      bugCount: problem.bugCount ?? 1,
+      random: this.random,
+    });
+    return this.#openGhostMatch({ user, category, track, problem, durationMs, ghost, timeline });
+  }
+
+  async #openGhostMatch({ user, category, track, problem, durationMs, ghost, timeline }) {
+    const testCount = category === 'FRONTEND' ? 1 : problem.tests.length;
+    const { id } = await this.repo.createMatch({
+      mode: 'GHOST',
+      category,
+      ...(category === 'FRONTEND' && { track }),
+      status: 'WAITING',
+      player1Id: user.id,
+      player2Id: null,
+      problemId: problem.id,
+      durationMs,
+      testCount,
+      player1Elo: user.elo,
+      player2Elo: ghost.rating,
+      ghostUserId: ghost.kind === 'ghost' ? ghost.userId : null,
+      ghostSourceMatchId: ghost.kind === 'ghost' ? ghost.sourceMatchId : null,
+      botId: ghost.kind === 'bot' ? ghost.id : null,
+    });
+    const opponent = {
+      ...newPlayer({
+        id: GHOST_PLAYER_ID,
+        username: ghost.kind === 'ghost' ? ghost.username : ghost.name,
+        elo: ghost.rating,
+      }),
+      ready: true, // a replay is always "there"; it has no connection state
+      ghost,
+      timeline,
+    };
+    const match = {
+      id,
+      mode: 'GHOST',
+      category,
+      track,
+      roomCode: null,
+      difficultyChoice: 'ANY',
+      status: 'WAITING',
+      problem,
+      durationMs,
+      testCount,
+      players: [newPlayer(user), opponent],
+      createdAt: Date.now(),
+      startsAt: null,
+      startedAt: null,
+      endsAt: null,
+      result: null,
+      timers: {},
+    };
+    this.matches.set(id, match);
+    this.presence.set(user.id, { type: 'match', matchId: id });
+    match.timers.ready = setTimeout(() => this.#cancel(match), this.config.readyTimeoutMs);
+    this.notify(user.id, 'match:found', { matchId: id, mode: 'GHOST' });
+    return match;
+  }
+
+  /** One replayed submission of the ghost/bot, at its recorded time. */
+  async #ghostEvent(match, event) {
+    if (match.status !== 'ACTIVE') return;
+    const [human, ghost] = match.players;
+    const now = Date.now();
+    ghost.attempts += 1;
+    if (match.category === 'FRONTEND') {
+      if (isBetterFrontendResult({ score: event.score, charCount: event.charCount }, ghost)) {
+        ghost.bestScore = event.score;
+        ghost.bestChars = event.charCount;
+        ghost.reachedAt = now;
+      }
+      if (event.accepted) ghost.passed = 1;
+    } else {
+      applyJudgedResult(ghost, { passed: event.passed, lines: event.lines ?? null }, now);
+    }
+    this.notify(human.userId, 'opponent:progress', this.#progress(match, ghost));
+    if (event.accepted) {
+      ghost.solvedAt = now;
+      await this.#finish(match, { winnerId: GHOST_PLAYER_ID, reason: 'SOLVED' });
+    }
+  }
+
+  #durationOf(category, problem) {
+    return (category === 'DEBUG' ? this.config.debugDurationsMs : this.config.durationsMs)[
+      problem.difficulty
+    ];
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -332,12 +515,15 @@ export class MatchManager {
       if (!picked) throw new MatchError('NO_PROBLEMS', 'No problem is available for this match.');
 
       const problem = await this.repo.loadProblem(picked.id);
-      const durationMs = this.config.durationsMs[problem.difficulty];
+      const durationMs = (
+        category === 'DEBUG' ? this.config.debugDurationsMs : this.config.durationsMs
+      )[problem.difficulty];
       // FRONTEND: one "test" (passed = 1 once solved); progress is the best score.
       const testCount = category === 'FRONTEND' ? 1 : problem.tests.length;
       const { id } = await this.repo.createMatch({
         mode,
-        ...(category === 'FRONTEND' && { category, track }),
+        ...(category !== 'ALGO' && { category }),
+        ...(category === 'FRONTEND' && { track }),
         status: 'WAITING',
         roomCode,
         player1Id: id1,
@@ -442,6 +628,16 @@ export class MatchManager {
       });
     }
     match.timers.end = setTimeout(() => this.#finishByTimeout(match), match.durationMs);
+    if (match.mode === 'GHOST') {
+      // Replay the ghost/bot at its recorded offsets from the start.
+      match.timers.ghost = match.players[1].timeline.map((event) =>
+        setTimeout(() => {
+          this.#ghostEvent(match, event).catch((err) =>
+            this.#reportBackgroundError('ghost replay failed', err),
+          );
+        }, event.offsetMs),
+      );
+    }
   }
 
   /** Full state for one player (match:state). Never includes hidden tests. */
@@ -522,6 +718,11 @@ export class MatchManager {
       throw err;
     }
 
+    // DEBUG: lines changed compared to the buggy code (the starter code of that language).
+    const lines =
+      match.category === 'DEBUG'
+        ? linesChanged(match.problem.starterCode?.[language] ?? '', code)
+        : null;
     const submission = await this.repo
       .saveSubmission({
         matchId: match.id,
@@ -533,6 +734,7 @@ export class MatchManager {
         passed: verdict.passed,
         total: verdict.total,
         timeMs: verdict.timeMs,
+        ...(lines !== null && { linesChanged: lines }),
       })
       .catch((err) => {
         console.error('[match] could not save submission:', err.message);
@@ -540,13 +742,11 @@ export class MatchManager {
       });
 
     const stillActive = match.status === 'ACTIVE';
-    if (stillActive && verdict.passed > player.passed) {
-      player.passed = verdict.passed;
-      player.reachedAt = Date.now();
-    }
+    if (stillActive) applyJudgedResult(player, { passed: verdict.passed, lines }, Date.now());
     const payload = {
       matchId: match.id,
       result: toPublicResult('submit', verdict),
+      ...(lines !== null && { linesChanged: lines }),
       submission: submission && {
         id: submission.id,
         status: verdict.status,
@@ -708,6 +908,8 @@ export class MatchManager {
     let winnerId = null;
     if (match.category === 'FRONTEND') {
       winnerId = frontendTimeoutWinner(a, b);
+    } else if (match.category === 'DEBUG') {
+      winnerId = debugTimeoutWinner(a, b);
     } else if (a.passed !== b.passed) {
       winnerId = (a.passed > b.passed ? a : b).userId;
     } else if (a.passed > 0 && a.reachedAt !== b.reachedAt) {
@@ -726,29 +928,39 @@ export class MatchManager {
     const [p1, p2] = match.players;
 
     let deltas = [null, null];
-    if (match.mode === 'RANKED') {
+    const ghostMatch = match.mode === 'GHOST';
+    if (match.mode === 'RANKED' || ghostMatch) {
       const score1 = winnerId === null ? 0.5 : winnerId === p1.userId ? 1 : 0;
-      const { a, b } = calculateEloChange(p1.elo, p2.elo, score1);
-      deltas = [a, b];
+      const { a, b } = calculateEloChange(
+        p1.elo,
+        p2.elo,
+        score1,
+        ghostMatch ? GHOST_K_FACTOR : undefined,
+      );
+      // Against a ghost or bot, only the human's rating changes.
+      deltas = ghostMatch ? [a, null] : [a, b];
     }
+    const rated = (p, i) => deltas[i] !== null && !p.ghost;
     const outcome = (p) => (winnerId === null ? 'draw' : p.userId === winnerId ? 'win' : 'loss');
     const frontend = match.category === 'FRONTEND';
+    const debug = match.category === 'DEBUG';
 
     match.result = {
       matchId: match.id,
       mode: match.mode,
-      ...(frontend && { category: match.category }),
+      ...((frontend || debug) && { category: match.category }),
       winnerId,
       reason,
       eloChanges:
-        match.mode === 'RANKED'
-          ? Object.fromEntries(
-              match.players.map((p, i) => [
-                p.userId,
-                { before: p.elo, after: p.elo + deltas[i], delta: deltas[i] },
-              ]),
-            )
-          : null, // private rooms are unranked
+        match.mode === 'PRIVATE'
+          ? null // private rooms are unranked
+          : Object.fromEntries(
+              match.players.flatMap((p, i) =>
+                rated(p, i)
+                  ? [[p.userId, { before: p.elo, after: p.elo + deltas[i], delta: deltas[i] }]]
+                  : [],
+              ),
+            ),
       summary: {
         durationMs: match.startedAt ? endedAt - match.startedAt : 0,
         players: match.players.map((p) => ({
@@ -760,6 +972,8 @@ export class MatchManager {
           attempts: p.attempts,
           solveTimeMs: p.solvedAt && match.startedAt ? p.solvedAt - match.startedAt : null,
           ...(frontend && { score: p.bestScore, charCount: p.bestChars }),
+          ...(debug && { linesChanged: p.bestLines }),
+          ...(p.ghost && { ghost: p.ghost }),
         })),
       },
     };
@@ -773,7 +987,9 @@ export class MatchManager {
         {
           status: 'FINISHED',
           endReason: reason,
-          winnerId,
+          // winnerId can only point to a real user: a ghost/bot win is stored as winnerIsGhost.
+          winnerId: winnerId === GHOST_PLAYER_ID ? null : winnerId,
+          ...(ghostMatch && { winnerIsGhost: winnerId === GHOST_PLAYER_ID }),
           endedAt: new Date(endedAt),
           player1Passed: p1.passed,
           player2Passed: p2.passed,
@@ -787,15 +1003,22 @@ export class MatchManager {
             player1Chars: p1.bestChars,
             player2Chars: p2.bestChars,
           }),
+          ...(debug && { player1Lines: p1.bestLines, player2Lines: p2.bestLines }),
         },
-        match.mode === 'RANKED'
-          ? match.players.map((p, i) => ({
-              userId: p.userId,
-              category: match.category,
-              eloDelta: deltas[i],
-              result: outcome(p),
-            }))
-          : [],
+        match.mode === 'PRIVATE'
+          ? []
+          : match.players.flatMap((p, i) =>
+              rated(p, i)
+                ? [
+                    {
+                      userId: p.userId,
+                      category: match.category,
+                      eloDelta: deltas[i],
+                      result: outcome(p),
+                    },
+                  ]
+                : [],
+            ),
       );
     } catch (err) {
       console.error(`[match] could not persist the end of match ${match.id}:`, err);
@@ -846,6 +1069,7 @@ export class MatchManager {
 
   #clearTimers(match) {
     for (const key of ['ready', 'countdown', 'end']) clearTimeout(match.timers[key]);
+    for (const timer of match.timers.ghost ?? []) clearTimeout(timer);
     for (const p of match.players) {
       clearTimeout(p.graceTimer);
       p.graceTimer = null;
@@ -996,12 +1220,17 @@ export class MatchManager {
       userId: p.userId,
       username: p.username,
       elo: p.elo,
-      connected: p.connected,
+      // A replay has no connection state (no "offline" badge, no typing indicator).
+      connected: p.ghost ? null : p.connected,
       ...this.#progress(match, p),
+      ...(p.ghost && { ghost: p.ghost }),
     };
   }
 
-  /** ALGO: tests passed. FRONTEND: also the best score and the threshold to reach. */
+  /**
+   * ALGO: tests passed. DEBUG: also the lines changed of the best submission. FRONTEND: also the
+   * best score and the threshold to reach.
+   */
   #progress(match, p) {
     const progress = {
       userId: p.userId,
@@ -1009,6 +1238,7 @@ export class MatchManager {
       total: match.testCount,
       attempts: p.attempts,
     };
+    if (match.category === 'DEBUG') return { ...progress, linesChanged: p.bestLines };
     if (match.category !== 'FRONTEND') return progress;
     return { ...progress, score: p.bestScore, threshold: thresholdOfMatch(match) };
   }
@@ -1034,7 +1264,7 @@ export class MatchManager {
         score: row.player1Score === null ? null : Number(row.player1Score),
       },
       {
-        ...row.player2,
+        ...(row.player2 ?? archivedGhost(row)),
         elo: row.player2Elo,
         passed: row.player2Passed,
         eloChange: row.player2EloChange,
@@ -1042,11 +1272,13 @@ export class MatchManager {
       },
     ];
     const frontend = row.category === 'FRONTEND';
+    const winnerId = row.winnerIsGhost ? GHOST_PLAYER_ID : row.winnerId;
     const view = (p) => ({
       userId: p.id,
       username: p.username,
       elo: p.elo,
-      connected: false,
+      connected: p.ghost ? null : false,
+      ...(p.ghost && { ghost: p.ghost }),
       passed: p.passed,
       total: row.testCount,
       attempts: null,
@@ -1073,15 +1305,17 @@ export class MatchManager {
         matchId: row.id,
         mode: row.mode,
         ...(frontend && { category: row.category }),
-        winnerId: row.winnerId,
+        winnerId,
         reason: row.endReason ?? 'CANCELLED',
         eloChanges:
-          row.mode === 'RANKED' && row.player1EloChange !== null
+          row.mode !== 'PRIVATE' && row.player1EloChange !== null
             ? Object.fromEntries(
-                players.map((p) => [
-                  p.id,
-                  { before: p.elo, after: p.elo + p.eloChange, delta: p.eloChange },
-                ]),
+                players
+                  .filter((p) => p.eloChange !== null)
+                  .map((p) => [
+                    p.id,
+                    { before: p.elo, after: p.elo + p.eloChange, delta: p.eloChange },
+                  ]),
               )
             : null,
         summary: {
@@ -1089,12 +1323,13 @@ export class MatchManager {
           players: players.map((p) => ({
             userId: p.id,
             username: p.username,
-            result: row.winnerId === null ? 'draw' : row.winnerId === p.id ? 'win' : 'loss',
+            result: winnerId === null ? 'draw' : winnerId === p.id ? 'win' : 'loss',
             passed: p.passed,
             total: row.testCount,
             attempts: null,
             solveTimeMs: null,
             ...(frontend && { score: p.score ?? 0, charCount: null }),
+            ...(p.ghost && { ghost: p.ghost }),
           })),
         },
       },
@@ -1135,6 +1370,8 @@ function newPlayer(user) {
     // FRONTEND: best score so far and the character count of that submission
     bestScore: 0,
     bestChars: null,
+    // DEBUG: lines changed of the best submission
+    bestLines: null,
     attempts: 0,
     solvedAt: null,
     lastExecAt: -Infinity,
@@ -1154,6 +1391,8 @@ export function publicProblem(problem) {
     slug: problem.slug,
     title: problem.title,
     difficulty: problem.difficulty,
+    // DEBUG: starterCode is the buggy code to fix.
+    ...(problem.category === 'DEBUG' && { category: 'DEBUG', bugCount: problem.bugCount }),
     description: problem.description,
     starterCode: problem.starterCode,
     timeLimitMs: problem.timeLimitMs,
@@ -1212,3 +1451,41 @@ function toFrontendMatchError(err) {
   }
   return err;
 }
+
+/**
+ * ALGO/DEBUG progress: more tests passed is better; for DEBUG, the same count with fewer lines
+ * changed is better too (it becomes the result that counts, at this time).
+ */
+export function applyJudgedResult(player, { passed, lines = null }, at) {
+  if (passed > player.passed) {
+    player.passed = passed;
+    player.bestLines = lines;
+    player.reachedAt = at;
+  } else if (
+    lines !== null &&
+    passed > 0 &&
+    passed === player.passed &&
+    (player.bestLines === null || lines < player.bestLines)
+  ) {
+    player.bestLines = lines;
+    player.reachedAt = at;
+  }
+}
+
+/**
+ * DEBUG timeout rules: both at 0 tests → draw. Otherwise most tests passed → fewer lines changed
+ * → earlier submission (of that best result) → draw.
+ */
+export function debugTimeoutWinner(a, b) {
+  if (a.passed === 0 && b.passed === 0) return null;
+  if (a.passed !== b.passed) return (a.passed > b.passed ? a : b).userId;
+  const linesA = a.bestLines ?? Infinity;
+  const linesB = b.bestLines ?? Infinity;
+  if (linesA !== linesB) return (linesA < linesB ? a : b).userId;
+  if (a.reachedAt !== null && b.reachedAt !== null && a.reachedAt !== b.reachedAt) {
+    return (a.reachedAt < b.reachedAt ? a : b).userId;
+  }
+  return null;
+}
+
+const thresholdOfProblem = (problem) => publicFrontendProblem(problem).threshold;

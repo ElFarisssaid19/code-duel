@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { CATEGORIES, TRACKS } from '../lib/ratings.js';
 
-export const categorySchema = z.enum(CATEGORIES, { error: 'category must be ALGO or FRONTEND' });
+export const categorySchema = z.enum(CATEGORIES, {
+  error: 'category must be ALGO, FRONTEND or DEBUG',
+});
 export const trackSchema = z.enum(TRACKS, { error: 'track must be HTML, CSS or HTML_CSS' });
 const category = categorySchema.default('ALGO');
 
@@ -30,7 +32,9 @@ export const historyQuerySchema = z.object({
   page,
   limit: z.coerce.number().int().min(1).max(50, 'limit must be at most 50').default(10),
   mode: z
-    .enum(['all', 'ranked', 'private'], { error: 'mode must be all, ranked or private' })
+    .enum(['all', 'ranked', 'private', 'ghost'], {
+      error: 'mode must be all, ranked, private or ghost',
+    })
     .default('all'),
   /** No category: matches of both categories. */
   category: categorySchema.optional(),

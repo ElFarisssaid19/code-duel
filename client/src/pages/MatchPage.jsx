@@ -12,9 +12,11 @@ import { submissionPayload } from '@/components/frontend/payload.js';
 import MatchTimer from '@/components/match/MatchTimer.jsx';
 import PlayerProgress from '@/components/match/PlayerProgress.jsx';
 import ResultModal from '@/components/match/ResultModal.jsx';
-import { outcomeOf } from '@/components/match/format.js';
+import ShareModal from '@/components/match/ShareModal.jsx';
+import { opponentLabelStart, outcomeOf } from '@/components/match/format.js';
 import CodeEditor from '@/components/practice/CodeEditor.jsx';
 import LanguageSelect from '@/components/practice/LanguageSelect.jsx';
+import LinesChanged from '@/components/practice/LinesChanged.jsx';
 import ProblemStatement from '@/components/practice/ProblemStatement.jsx';
 import ResultsPanel from '@/components/practice/ResultsPanel.jsx';
 import { paramNames } from '@/components/practice/params.js';
@@ -25,7 +27,7 @@ import { useNow } from '@/hooks/useNow.js';
 import { useReducedMotion } from '@/hooks/useReducedMotion.js';
 import { useRunShortcuts } from '@/hooks/useRunShortcuts.js';
 import { useToasts } from '@/hooks/useToasts.js';
-import { formatScore, TRACK_LABELS } from '@/lib/categories.js';
+import { CATEGORY_LABELS, formatScore, TRACK_LABELS } from '@/lib/categories.js';
 import { playSound } from '@/lib/sound.js';
 import { request, socket } from '@/lib/socket.js';
 import { loadItem, saveItem } from '@/lib/storage.js';
@@ -85,7 +87,9 @@ function ArenaHeader({ state, offsetMs, typingUntil }) {
   const { me, opponent } = state;
   const live = state.status === 'ACTIVE';
   const now = useNow(250);
-  const modeLabel = state.mode === 'RANKED' ? 'Ranked duel' : 'Private duel';
+  const modeLabel = { RANKED: 'Ranked duel', PRIVATE: 'Private duel', GHOST: 'Ghost duel' }[
+    state.mode
+  ];
   return (
     <header className="border-b border-line bg-canvas/90 px-4 pt-2 pb-3">
       {/* Focus mode: no navbar, just a minimal header */}
@@ -95,7 +99,9 @@ function ArenaHeader({ state, offsetMs, typingUntil }) {
           <span className="eyebrow">
             {state.category === 'FRONTEND'
               ? `${modeLabel} · Frontend${state.problem?.track ? ` · ${TRACK_LABELS[state.problem.track]}` : ''}`
-              : modeLabel}
+              : state.category === 'DEBUG'
+                ? `${modeLabel} · ${CATEGORY_LABELS.DEBUG}`
+                : modeLabel}
           </span>
           <MuteToggle />
         </div>
@@ -229,9 +235,11 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
   );
   const [running, setRunning] = useState(null);
   const [result, setResult] = useState(null);
+  const [resultLines, setResultLines] = useState(null);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [pane, setPane] = useState('problem'); // small screens only: one pane at a time
+  const debug = problem.category === 'DEBUG';
   const runningRef = useRef(false);
   const lastPing = useRef(0);
 
@@ -263,6 +271,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
           code,
         });
         setResult(data.result);
+        setResultLines(data.linesChanged ?? null);
         setActiveTab(
           Math.max(
             0,
@@ -327,6 +336,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
               onChange={changeLanguage}
               disabled={Boolean(running)}
             />
+            {debug && <LinesChanged original={problem.starterCode[language]} code={code} />}
             <div className="ml-auto flex items-center gap-2">
               <Button variant="danger-outline" onClick={onForfeit} disabled={!live}>
                 Forfeit
@@ -375,6 +385,7 @@ function Arena({ state, matchId, offsetMs, typingUntil, onForfeit }) {
               activeTab={activeTab}
               onTabChange={setActiveTab}
               params={params}
+              linesChanged={resultLines}
             />
           </div>
         </section>
@@ -395,6 +406,9 @@ function MatchSession({ matchId }) {
   const [rematchError, setRematchError] = useState(null);
   const [toasts, toast] = useToasts();
   const [celebrate, setCelebrate] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [ghostBusy, setGhostBusy] = useState(false);
+  const opponentRef = useRef(null); // for honest toasts ("The ghost of @x now passes…")
   const reducedMotion = useReducedMotion();
   const opponentPassed = useRef(0);
   const now = useNow(200);
@@ -410,6 +424,7 @@ function MatchSession({ matchId }) {
         if (cancelled) return;
         syncClock(snapshot.serverNow);
         opponentPassed.current = snapshot.opponent.score ?? snapshot.opponent.passed;
+        opponentRef.current = snapshot.opponent;
         dispatch({ type: 'snapshot', snapshot });
       } catch (err) {
         if (!cancelled) setLoadError(err);
@@ -433,10 +448,13 @@ function MatchSession({ matchId }) {
         const value = progress.score ?? progress.passed;
         if (value > opponentPassed.current) {
           playSound('opponentProgress');
+          const who = opponentRef.current?.ghost
+            ? opponentLabelStart(opponentRef.current)
+            : 'Your opponent';
           toast(
             progress.score !== undefined
-              ? `Your opponent now scores ${formatScore(progress.score)}`
-              : `Your opponent now passes ${progress.passed}/${progress.total} tests`,
+              ? `${who} now scores ${formatScore(progress.score)}`
+              : `${who} now passes ${progress.passed}/${progress.total} tests`,
             'info',
           );
         }
@@ -481,6 +499,25 @@ function MatchSession({ matchId }) {
     } finally {
       setForfeiting(false);
       setConfirmForfeit(false);
+    }
+  }
+
+  /** "Play another ghost": same category (and track); match:found navigates to the new match. */
+  async function anotherGhost() {
+    setGhostBusy(true);
+    try {
+      await request(
+        'ghost:start',
+        state.category && state.category !== 'ALGO'
+          ? {
+              category: state.category,
+              ...(state.category === 'FRONTEND' && state.track && { track: state.track }),
+            }
+          : {},
+      );
+    } catch (err) {
+      toast(err.message, 'danger');
+      setGhostBusy(false);
     }
   }
 
@@ -552,11 +589,15 @@ function MatchSession({ matchId }) {
         </div>
       </Modal>
 
-      {ended && state.result && (
+      {ended && state.result && !sharing && (
         <ResultModal
           result={state.result}
           meId={state.me.userId}
+          opponent={state.opponent}
           opponentName={state.opponent.username}
+          onAnotherGhost={state.result.mode === 'GHOST' ? anotherGhost : null}
+          ghostBusy={ghostBusy}
+          onShare={state.status === 'FINISHED' ? () => setSharing(true) : null}
           rematch={
             state.rematch ??
             (state.result.mode === 'PRIVATE' ? { status: 'open', requestedBy: [] } : null)
@@ -567,6 +608,7 @@ function MatchSession({ matchId }) {
           onHome={() => navigate('/')}
         />
       )}
+      {sharing && <ShareModal open matchId={matchId} onClose={() => setSharing(false)} />}
       {celebrate && !reducedMotion && <Confetti />}
       <ToastStack toasts={toasts} />
     </>

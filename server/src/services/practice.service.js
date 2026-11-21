@@ -1,6 +1,7 @@
 import { HttpError } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
 import { judgeSolution, judgeSubmission, JudgeUnavailableError, STATUS } from './judge/index.js';
+import { linesChanged } from './debug/linesChanged.js';
 import { submitFrontendPractice } from './frontend/practice.js';
 import { toPublicResult } from './judge/publicResult.js';
 import { frontendProblemSelect } from './problem.service.js';
@@ -75,6 +76,7 @@ export async function judgePractice({ userId, slug, language, code, mode, kind, 
     where: { slug },
     select: {
       category: true,
+      starterCode: true,
       id: true,
       functionName: true,
       timeLimitMs: true,
@@ -105,7 +107,11 @@ export async function judgePractice({ userId, slug, language, code, mode, kind, 
   });
 
   const result = toPublicResult(mode, verdict);
-  if (mode !== 'submit') return { result };
+  // DEBUG: lines changed compared to the buggy code (the starter code).
+  const debug = problem.category === 'DEBUG' && {
+    linesChanged: linesChanged(problem.starterCode?.[language] ?? '', code),
+  };
+  if (mode !== 'submit') return { result, ...debug };
 
   const submission = await prisma.submission.create({
     data: {
@@ -118,8 +124,9 @@ export async function judgePractice({ userId, slug, language, code, mode, kind, 
       passed: verdict.passed,
       total: verdict.total,
       timeMs: verdict.timeMs,
+      ...(debug && { linesChanged: debug.linesChanged }),
     },
     select: { id: true, status: true, passed: true, total: true, createdAt: true },
   });
-  return { result, submission };
+  return { result, submission, ...debug };
 }

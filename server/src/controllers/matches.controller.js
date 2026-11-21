@@ -5,6 +5,7 @@ import {
   getMatchDetails,
   getMatchPreview,
 } from '../services/matchDetails.service.js';
+import { createShare, getShare, revokeShare } from '../services/share/index.js';
 import { idParam } from '../validators/query.schemas.js';
 
 function matchId(req) {
@@ -35,4 +36,30 @@ export async function preview(req, res) {
   }
   res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=3600' });
   res.send(png);
+}
+
+/** Renderer failures while drawing a card → 503 (standard error shape). */
+function cardError(err) {
+  const mapped = toFrontendHttpError(err);
+  return mapped instanceof HttpError ? mapped : err;
+}
+
+/** POST /api/matches/:id/share → 201 { share } (participants, finished matches; one per user) */
+export async function createShareLink(req, res) {
+  try {
+    res.status(201).json({ share: await createShare(matchId(req), req.user.id) });
+  } catch (err) {
+    throw cardError(err);
+  }
+}
+
+/** GET /api/matches/:id/share → { share } or { share: null } */
+export async function getShareLink(req, res) {
+  res.json({ share: await getShare(matchId(req), req.user.id) });
+}
+
+/** DELETE /api/matches/:id/share → 204 (the public link and cards 404 from now on) */
+export async function revokeShareLink(req, res) {
+  await revokeShare(matchId(req), req.user.id);
+  res.status(204).end();
 }

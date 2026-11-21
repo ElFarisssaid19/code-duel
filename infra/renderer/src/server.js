@@ -24,7 +24,7 @@ import {
 const PORT = Number(process.env.PORT ?? 5070);
 export const MAX_CODE_BYTES = 20 * 1024;
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // code + a base64 target PNG
-const MAX_SIDE = 1600;
+const MAX_SIDE = 1920; // 1080×1920 story share cards
 
 function send(res, status, body, type = 'application/json') {
   const payload = type === 'application/json' ? JSON.stringify(body) : body;

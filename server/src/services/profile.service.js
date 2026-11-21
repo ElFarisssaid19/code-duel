@@ -6,6 +6,7 @@ import { HttpError } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
 import { ratingSelect, ratingsByCategory } from '../lib/ratings.js';
 import { rankOf, START_ELO, winRate } from './leaderboard.service.js';
+import { archivedGhost } from './match/ghosts.js';
 
 const notFound = () => new HttpError(404, 'NOT_FOUND', 'User not found');
 
@@ -35,17 +36,31 @@ function side(match, userId) {
     passed: match[`${p}Passed`],
     reachedAt: match[`${p}ReachedAt`],
     score: match[`${p}Score`],
+    lines: match[`${p}Lines`],
     opponentElo: match[`${o}Elo`],
     opponent: match[o],
-    result: match.winnerId === null ? 'D' : match.winnerId === userId ? 'W' : 'L',
+    // GHOST matches: a ghost/bot win is stored as winnerIsGhost (winnerId is null).
+    result: match.winnerIsGhost
+      ? 'L'
+      : match.winnerId === null
+        ? 'D'
+        : match.winnerId === userId
+          ? 'W'
+          : 'L',
   };
 }
 
-/** Finished ranked matches of a category, oldest first (ELO history, streaks, best ELO). 1 query. */
+/** Rated matches: RANKED and GHOST (only the human's rating changes in GHOST matches). */
+const RATED_MODES = ['RANKED', 'GHOST'];
+
+/**
+ * Finished rated matches (ranked + ghost) of a category, oldest first (ELO history, streaks,
+ * best ELO). 1 query.
+ */
 function rankedMatches(userId, category) {
   return prisma.match.findMany({
     where: {
-      mode: 'RANKED',
+      mode: { in: RATED_MODES },
       status: 'FINISHED',
       category,
       OR: [{ player1Id: userId }, { player2Id: userId }],
@@ -55,6 +70,7 @@ function rankedMatches(userId, category) {
       id: true,
       endedAt: true,
       winnerId: true,
+      winnerIsGhost: true,
       player1Id: true,
       player2Id: true,
       player1Elo: true,
@@ -155,7 +171,7 @@ export async function getEloHistory(username, category = 'ALGO') {
   };
 }
 
-const MODES = { all: undefined, ranked: 'RANKED', private: 'PRIVATE' };
+const MODES = { all: undefined, ranked: 'RANKED', private: 'PRIVATE', ghost: 'GHOST' };
 
 /**
  * GET /api/users/:username/matches: finished matches, newest first, optionally of one category.
@@ -184,6 +200,23 @@ export async function getMatchHistory(username, { page, limit, mode, category })
       },
     }),
   ]);
+
+  // Ghost/bot details, in one more query and only when the page has GHOST matches.
+  const ghostIds = matches.filter((m) => m.mode === 'GHOST').map((m) => m.id);
+  const ghostRows = ghostIds.length
+    ? await prisma.match.findMany({
+        where: { id: { in: ghostIds } },
+        select: {
+          id: true,
+          botId: true,
+          player2Elo: true,
+          ghostSourceMatchId: true,
+          ghostUser: { select: { id: true, username: true } },
+          ghostSourceMatch: { select: { endedAt: true } },
+        },
+      })
+    : [];
+  const ghostById = new Map(ghostRows.map((row) => [row.id, row]));
 
   // Languages the user submitted with, for all matches of the page at once.
   const languageRows = matches.length
@@ -214,9 +247,13 @@ export async function getMatchHistory(username, { page, limit, mode, category })
           track,
           score: s.score === null ? null : Number(s.score),
         }),
+        ...(m.category === 'DEBUG' && { category: m.category, linesChanged: s.lines }),
         result: s.result,
         endReason: m.endReason,
-        opponent: { username: s.opponent.username, elo: s.opponentElo },
+        opponent:
+          m.mode === 'GHOST'
+            ? { ...ghostOpponent(ghostById.get(m.id)), elo: s.opponentElo }
+            : { username: s.opponent.username, elo: s.opponentElo },
         problem,
         languages: languagesByMatch.get(m.id) ?? [],
         passed: s.passed,
@@ -228,4 +265,36 @@ export async function getMatchHistory(username, { page, limit, mode, category })
       };
     }),
   };
+}
+
+/** The ghost/bot opponent of a GHOST match (always labelled as such). */
+function ghostOpponent(match) {
+  const { username, ghost } = archivedGhost(match);
+  return { username, ghost };
+}
+
+/**
+ * GET /api/users/:username/opponents?category=: W/L/D against real players (RANKED) and against
+ * ghosts/bots (GHOST), finished matches only. 2 queries.
+ */
+export async function getOpponentBreakdown(username, category = 'ALGO') {
+  const user = await findUser(username);
+  const matches = await prisma.match.findMany({
+    where: {
+      status: 'FINISHED',
+      category,
+      mode: { in: RATED_MODES },
+      OR: [{ player1Id: user.id }, { player2Id: user.id }],
+    },
+    select: { mode: true, winnerId: true, winnerIsGhost: true, player1Id: true, player2Id: true },
+  });
+  const empty = () => ({ wins: 0, losses: 0, draws: 0, games: 0 });
+  const breakdown = { vsPlayers: empty(), vsGhosts: empty() };
+  const KEY = { W: 'wins', L: 'losses', D: 'draws' };
+  for (const m of matches) {
+    const bucket = m.mode === 'GHOST' ? breakdown.vsGhosts : breakdown.vsPlayers;
+    bucket[KEY[side(m, user.id).result]] += 1;
+    bucket.games += 1;
+  }
+  return { username: user.username, category, ...breakdown };
 }

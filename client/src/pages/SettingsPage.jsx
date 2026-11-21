@@ -71,6 +71,59 @@ function PreferencesForm() {
   );
 }
 
+/** "Allow my ranked runs to be used as ghosts" (saved right away). */
+function GhostToggle() {
+  const user = useAuthStore((s) => s.user);
+  const updatePreferences = useAuthStore((s) => s.updatePreferences);
+  const id = useId();
+  const [status, setStatus] = useState({ saving: false, message: null, error: null });
+
+  async function toggle(event) {
+    const allowGhosts = event.target.checked;
+    setStatus({ saving: true, message: null, error: null });
+    try {
+      await updatePreferences({ allowGhosts });
+      setStatus({
+        saving: false,
+        message: allowGhosts
+          ? 'Your ranked runs can be replayed as ghosts.'
+          : 'Your runs will no longer be used as ghosts.',
+        error: null,
+      });
+    } catch (err) {
+      setStatus({ saving: false, message: null, error: err.message });
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <label htmlFor={id} className="flex cursor-pointer items-start gap-3">
+        <input
+          id={id}
+          type="checkbox"
+          checked={user.allowGhosts !== false}
+          onChange={toggle}
+          disabled={status.saving}
+          className="mt-0.5 size-5 shrink-0 accent-emerald-400"
+          data-testid="allow-ghosts"
+        />
+        <span>
+          <span className="block text-sm font-medium text-zinc-200">
+            Allow my ranked runs to be used as ghosts
+          </span>
+          <span className="block text-xs text-ink-subtle">
+            Other players may race a replay of your past ranked runs: your username, rating at the
+            time and progress (tests passed or score, at the same times). Never your code. Private
+            matches are never used.
+          </span>
+        </span>
+      </label>
+      <FormError tone="success">{status.message}</FormError>
+      <FormError>{status.error}</FormError>
+    </div>
+  );
+}
+
 function PasswordForm({ onChanged }) {
   const changePassword = useAuthStore((s) => s.changePassword);
   const { values, fieldErrors, formError, submitting, handleChange, handleSubmit } = useApiForm(
@@ -155,6 +208,13 @@ export default function SettingsPage() {
         description="How the app behaves for your account, on every device."
       >
         <PreferencesForm />
+      </Section>
+
+      <Section
+        title="Ghost replays"
+        description="Ghost duels replay real players' past ranked runs. You decide whether yours can be used."
+      >
+        <GhostToggle />
       </Section>
 
       <Section

@@ -9,6 +9,8 @@ import { useAuthStore } from '@/store/authStore.js';
 export default function RegisterPage() {
   const register = useAuthStore((s) => s.register);
   const location = useLocation();
+  // "Settings" in the ghost note: GuestRoute sends the new account there right after signup.
+  const settingsAfterSignup = location.state?.from?.pathname === '/settings';
   // On success the store flips to "authenticated" and GuestRoute redirects.
   const { values, fieldErrors, formError, submitting, handleChange, handleSubmit } = useApiForm(
     { username: '', email: '', password: '' },
@@ -66,6 +68,24 @@ export default function RegisterPage() {
         <Button type="submit" loading={submitting} className="w-full">
           {submitting ? 'Creating account…' : 'Create account'}
         </Button>
+        <p className="text-xs leading-relaxed text-ink-subtle" data-testid="ghost-note">
+          Your ranked runs may be replayed as ghosts for other players (your username and progress,
+          never your code). You can turn this off anytime in{' '}
+          <Link
+            to="/register"
+            replace
+            state={{ ...location.state, from: { pathname: '/settings' } }}
+            className="font-medium text-emerald-400 underline-offset-2 hover:underline"
+          >
+            Settings
+          </Link>
+          .
+          {settingsAfterSignup && (
+            <span className="mt-1 block text-emerald-300" role="status">
+              Settings will open right after you create your account.
+            </span>
+          )}
+        </p>
       </form>
     </AuthLayout>
   );

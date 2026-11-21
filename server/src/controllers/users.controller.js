@@ -1,5 +1,10 @@
 import { HttpError } from '../lib/errors.js';
-import { getEloHistory, getMatchHistory, getProfile } from '../services/profile.service.js';
+import {
+  getEloHistory,
+  getMatchHistory,
+  getOpponentBreakdown,
+  getProfile,
+} from '../services/profile.service.js';
 import {
   categoryQuerySchema,
   historyQuerySchema,
@@ -30,4 +35,11 @@ export async function eloHistory(req, res) {
 export async function matches(req, res) {
   const name = username(req);
   res.json(await getMatchHistory(name, historyQuerySchema.parse(req.query)));
+}
+
+/** GET /api/users/:username/opponents?category=: W/L/D vs players and vs ghosts */
+export async function opponents(req, res) {
+  const name = username(req);
+  const { category } = categoryQuerySchema.parse(req.query);
+  res.json(await getOpponentBreakdown(name, category));
 }

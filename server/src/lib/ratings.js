@@ -1,5 +1,7 @@
 /** Per-category ratings (UserRating rows). A missing row means the starting defaults. */
-export const CATEGORIES = ['ALGO', 'FRONTEND'];
+export const CATEGORIES = ['ALGO', 'FRONTEND', 'DEBUG'];
+/** Categories judged by go-judge (function-style problems with tests). */
+export const JUDGED_CATEGORIES = ['ALGO', 'DEBUG'];
 export const TRACKS = ['HTML', 'CSS', 'HTML_CSS'];
 export const START_ELO = 1000;
 

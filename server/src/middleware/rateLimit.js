@@ -44,6 +44,21 @@ export const passwordChangeRateLimit = limiter({
   keyGenerator: (req) => `user:${req.user.id}`,
 });
 
+/** Share links (each one renders a card): 10 per 10 minutes per user. Needs requireAuth. */
+export const shareRateLimit = limiter({
+  windowMs: 10 * 60 * 1000,
+  limit: 10,
+  message: 'Too many share cards created. Please try again in a few minutes.',
+  keyGenerator: (req) => `user:${req.user.id}`,
+});
+
+/** Public share pages and card images (cached, but a miss renders a card): 120 per minute per IP. */
+export const publicShareRateLimit = limiter({
+  windowMs: 60 * 1000,
+  limit: 120,
+  message: 'Too many requests. Please slow down.',
+});
+
 /** Clears all rate-limit counters (used by tests). */
 export async function resetRateLimits() {
   await Promise.all(stores.map((s) => s.resetAll()));

@@ -23,7 +23,14 @@ function toSession(row) {
 export async function registerUser({ username, email, password }) {
   const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
   const row = await prisma.user.create({
-    data: { username, email, passwordHash, ratings: newRatingRows },
+    // The register page shows the ghost replay notice, so new users never get the Home banner.
+    data: {
+      username,
+      email,
+      passwordHash,
+      ghostNoticeDismissedAt: new Date(),
+      ratings: newRatingRows,
+    },
     select: sessionSelect,
   });
   return toSession(row);
@@ -66,7 +73,8 @@ export async function getSession(token) {
  */
 async function findSessionRow(userId) {
   const rows = await prisma.$queryRaw`
-    SELECT u.id, u.username, u.email, u.preferredLanguage, u.createdAt, u.tokenVersion,
+    SELECT u.id, u.username, u.email, u.preferredLanguage, u.allowGhosts, u.ghostNoticeDismissedAt,
+           u.createdAt, u.tokenVersion,
            r.category, r.elo, r.wins, r.losses, r.draws, r.bestElo
     FROM \`User\` u LEFT JOIN UserRating r ON r.userId = u.id
     WHERE u.id = ${userId}`;
@@ -118,11 +126,27 @@ export async function changePassword(userId, { currentPassword, newPassword }) {
 /** "Log out of all devices". */
 export const revokeAllSessions = (userId) => bumpTokenVersion(userId);
 
-/** Saves preferences (default editor language). */
-export async function updatePreferences(userId, { preferredLanguage }) {
+/** Saves preferences (default editor language, ghost opt-out). */
+export async function updatePreferences(userId, { preferredLanguage, allowGhosts }) {
   const row = await prisma.user.update({
     where: { id: userId },
-    data: { preferredLanguage },
+    data: {
+      ...(preferredLanguage !== undefined && { preferredLanguage }),
+      ...(allowGhosts !== undefined && { allowGhosts }),
+    },
+    select: publicUserSelect,
+  });
+  return toPublicUser(row);
+}
+
+/** Dismisses the one-time ghost replay notice (idempotent: the first dismissal time is kept). */
+export async function dismissGhostNotice(userId) {
+  await prisma.user.updateMany({
+    where: { id: userId, ghostNoticeDismissedAt: null },
+    data: { ghostNoticeDismissedAt: new Date() },
+  });
+  const row = await prisma.user.findUniqueOrThrow({
+    where: { id: userId },
     select: publicUserSelect,
   });
   return toPublicUser(row);

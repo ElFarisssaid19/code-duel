@@ -12,8 +12,13 @@ import EmptyState from '@/components/ui/EmptyState.jsx';
 import ErrorState from '@/components/ui/ErrorState.jsx';
 import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton.jsx';
 import { useState } from 'react';
+import { api } from '@/lib/api.js';
 import TrackBadge from '@/components/frontend/TrackBadge.jsx';
+import GhostName from '@/components/match/GhostName.jsx';
+import ShareModal from '@/components/match/ShareModal.jsx';
+import Button from '@/components/ui/Button.jsx';
 import { useApi } from '@/hooks/useApi.js';
+import { useAuthStore } from '@/store/authStore.js';
 import { CATEGORY_LABELS, formatScore, LANGUAGE_LABELS } from '@/lib/categories.js';
 import NotFoundPage from '@/pages/NotFoundPage.jsx';
 /** FRONTEND submissions are "solved" or not (a score), never "wrong answer". */
@@ -42,7 +47,14 @@ function PlayerCard({ player, winner, testCount, frontend }) {
       <div className="flex items-center gap-3">
         <ResultBadge result={player.result} />
         <div className="min-w-0">
-          <UserLink username={player.username} className="block truncate font-semibold text-ink" />
+          {player.ghost ? (
+            <GhostName ghost={player.ghost} className="text-ink" />
+          ) : (
+            <UserLink
+              username={player.username}
+              className="block truncate font-semibold text-ink"
+            />
+          )}
           <p className="font-mono text-xs text-ink-subtle">
             {player.eloBefore}
             {player.eloAfter !== null && ` → ${player.eloAfter}`}
@@ -84,9 +96,15 @@ function AlgoStats({ player, testCount }) {
         </dd>
       </div>
       <div>
-        <dt className="text-xs text-ink-subtle">Solve time</dt>
+        <dt className="text-xs text-ink-subtle">
+          {player.linesChanged !== undefined ? 'Lines changed' : 'Solve time'}
+        </dt>
         <dd className="font-mono text-zinc-200">
-          {player.solveTimeMs !== null ? formatClock(player.solveTimeMs) : '—'}
+          {player.linesChanged !== undefined
+            ? (player.linesChanged ?? '—')
+            : player.solveTimeMs !== null
+              ? formatClock(player.solveTimeMs)
+              : '—'}
         </dd>
       </div>
     </>
@@ -176,12 +194,22 @@ function Timeline({ match }) {
         return (
           <div key={player.userId} className="min-w-0 space-y-2">
             <h3 className="text-sm font-semibold text-zinc-300">
-              <UserLink username={player.username} />{' '}
-              <span className="font-normal text-ink-subtle">
-                · {entries.length} submission{entries.length === 1 ? '' : 's'}
-              </span>
+              {player.ghost ? (
+                <GhostName ghost={player.ghost} compact />
+              ) : (
+                <UserLink username={player.username} />
+              )}{' '}
+              {!player.ghost && (
+                <span className="font-normal text-ink-subtle">
+                  · {entries.length} submission{entries.length === 1 ? '' : 's'}
+                </span>
+              )}
             </h3>
-            {entries.length === 0 ? (
+            {player.ghost ? (
+              <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-sm text-ink-subtle">
+                A replay: its progress was replayed live during the match. Replays never show code.
+              </p>
+            ) : entries.length === 0 ? (
               <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-sm text-ink-subtle">
                 No submissions yet.
               </p>
@@ -289,8 +317,12 @@ function FinalCode({ match }) {
               ) : (
                 <EmptyState
                   icon="{ }"
-                  title="No submission"
-                  description={`${player.username} never submitted code.`}
+                  title={player.ghost ? 'No code for replays' : 'No submission'}
+                  description={
+                    player.ghost
+                      ? 'Ghosts and bots never show code.'
+                      : `${player.username} never submitted code.`
+                  }
                 />
               )}
             </div>
@@ -321,6 +353,60 @@ function DetailsSkeleton() {
   );
 }
 
+/** Participants of a finished match: share the result card, see the link, revoke it. */
+function ShareControls({ match }) {
+  const me = useAuthStore((s) => s.user);
+  const participant = match.players.some((p) => p.userId === me?.id);
+  const shareable = participant && match.status === 'FINISHED';
+  const { data, retry } = useApi(shareable ? `/matches/${match.id}/share` : null);
+  const [open, setOpen] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  if (!shareable) return null;
+  const share = data?.share;
+
+  async function revoke() {
+    setRevoking(true);
+    try {
+      await api.delete(`/matches/${match.id}/share`);
+    } finally {
+      setRevoking(false);
+      retry();
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="share-controls">
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Share result
+      </Button>
+      {share && (
+        <>
+          <span className="truncate font-mono text-xs text-ink-muted" data-testid="share-link">
+            {share.url}
+          </span>
+          <Button size="sm" variant="danger-outline" onClick={revoke} loading={revoking}>
+            Revoke link
+          </Button>
+        </>
+      )}
+      {open && (
+        <ShareModal
+          open
+          matchId={match.id}
+          onClose={() => {
+            setOpen(false);
+            retry();
+          }}
+          onRevoke={() => {
+            setOpen(false);
+            retry();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function MatchDetailsPage() {
   const { id } = useParams();
   const { data, error, loading, retry } = useApi(`/matches/${id}`);
@@ -338,14 +424,15 @@ export default function MatchDetailsPage() {
 
   const { match } = data;
   const frontend = match.category === 'FRONTEND';
+  const modeLabel = { RANKED: 'Ranked', PRIVATE: 'Private', GHOST: 'Ghost' }[match.mode];
   return (
     <main className="mx-auto w-full max-w-6xl space-y-8 px-4 py-8 sm:py-12">
       <header className="space-y-4 motion-safe:animate-fade-up">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-ink-muted">
-          <Badge tone={match.mode === 'RANKED' ? 'accent' : 'info'}>
-            {match.mode === 'RANKED' ? 'Ranked' : 'Private'}
-          </Badge>
-          {frontend && <Badge tone="info">{CATEGORY_LABELS.FRONTEND}</Badge>}
+          <Badge tone={match.mode === 'RANKED' ? 'accent' : 'info'}>{modeLabel}</Badge>
+          {match.category && match.category !== 'ALGO' && (
+            <Badge tone="info">{CATEGORY_LABELS[match.category]}</Badge>
+          )}
           <span>{STATUS_TEXT[match.status]}</span>
           {match.endReason && <span>· {REASON_LABELS[match.endReason]}</span>}
           {match.durationMs !== null && <span>· {formatClock(match.durationMs)} played</span>}
@@ -358,6 +445,7 @@ export default function MatchDetailsPage() {
           <DifficultyBadge difficulty={match.problem.difficulty} />
           {frontend && <TrackBadge track={match.track} />}
         </h1>
+        <ShareControls match={match} />
         <div className="flex flex-col gap-3 sm:flex-row">
           {match.players.map((p) => (
             <PlayerCard

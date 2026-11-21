@@ -1,5 +1,10 @@
 import { clearAuthCookie } from '../lib/authCookie.js';
-import { changePassword, revokeAllSessions, updatePreferences } from '../services/auth.service.js';
+import {
+  changePassword,
+  dismissGhostNotice,
+  revokeAllSessions,
+  updatePreferences,
+} from '../services/auth.service.js';
 import { startSession } from './auth.controller.js';
 
 /**
@@ -17,7 +22,12 @@ export async function logoutAll(req, res) {
   res.status(204).end();
 }
 
-/** PATCH /api/settings/preferences { preferredLanguage } → 200 { user } */
+/** PATCH /api/settings/preferences { preferredLanguage?, allowGhosts? } → 200 { user } */
 export async function preferences(req, res) {
   res.json({ user: await updatePreferences(req.user.id, req.body) });
+}
+
+/** POST /api/settings/ghost-notice/dismiss → 200 { user } (stored on the account: every device) */
+export async function ghostNotice(req, res) {
+  res.json({ user: await dismissGhostNotice(req.user.id) });
 }

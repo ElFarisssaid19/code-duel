@@ -18,3 +18,29 @@ export function outcomeOf(result, meId) {
   if (result.winnerId === null) return 'draw';
   return result.winnerId === meId ? 'win' : 'loss';
 }
+
+/** "Nov 2, 2026" */
+export const formatDay = (iso) =>
+  iso
+    ? new Date(iso).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : '';
+
+/**
+ * How a ghost/bot opponent is named in sentences: "the ghost of @ana", "Bot Byte". Ghosts and
+ * bots are never presented as live humans.
+ */
+export function opponentLabel(player) {
+  if (player?.ghost?.kind === 'ghost') return `the ghost of @${player.ghost.username}`;
+  if (player?.ghost?.kind === 'bot') return `Bot ${player.ghost.name}`;
+  return player?.username ?? 'Your opponent';
+}
+
+/** Same, starting a sentence. */
+export const opponentLabelStart = (player) => {
+  const label = opponentLabel(player);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};

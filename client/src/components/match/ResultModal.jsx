@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import UserLink from '@/components/UserLink.jsx';
-import { formatClock, outcomeOf } from '@/components/match/format.js';
+import GhostName from '@/components/match/GhostName.jsx';
+import { formatClock, opponentLabel, outcomeOf } from '@/components/match/format.js';
 import Button from '@/components/ui/Button.jsx';
 import Modal from '@/components/ui/Modal.jsx';
 import { formatScore } from '@/lib/categories.js';
@@ -98,13 +99,19 @@ function RematchButton({ rematch, meId, onRematch, busy }) {
 export default function ResultModal({
   result,
   meId,
-  opponentName,
+  opponent,
+  opponentName: rawOpponentName,
+  onAnotherGhost,
+  ghostBusy,
+  onShare,
   rematch,
   onRematch,
   rematchBusy,
   rematchError,
   onHome,
 }) {
+  // Ghosts and bots are always named as such ("the ghost of @x", "Bot Byte").
+  const opponentName = opponent?.ghost ? opponentLabel(opponent) : rawOpponentName;
   const outcome = outcomeOf(result, meId);
   const { title, tone, color, icon, animation } = HEADLINES[outcome];
   const elo = result.eloChanges?.[meId];
@@ -172,7 +179,11 @@ export default function ResultModal({
             {result.summary.players.map((p) => (
               <tr key={p.userId} className={p.userId === meId ? 'text-ink' : 'text-zinc-300'}>
                 <td className="py-2 font-medium">
-                  <UserLink username={p.username} />
+                  {p.ghost ? (
+                    <GhostName ghost={p.ghost} compact />
+                  ) : (
+                    <UserLink username={p.username} />
+                  )}
                   {p.userId === result.winnerId && (
                     <span className="ml-1.5 text-emerald-300" aria-label="winner">
                       ★
@@ -208,6 +219,16 @@ export default function ResultModal({
           )}
           {canRematch && (
             <RematchButton rematch={rematch} meId={meId} onRematch={onRematch} busy={rematchBusy} />
+          )}
+          {onShare && result.reason !== 'CANCELLED' && (
+            <Button variant="secondary" onClick={onShare}>
+              Share
+            </Button>
+          )}
+          {onAnotherGhost && (
+            <Button onClick={onAnotherGhost} loading={ghostBusy}>
+              Play another ghost
+            </Button>
           )}
           <Button variant="secondary" onClick={onHome} data-autofocus>
             Back home

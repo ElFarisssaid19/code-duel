@@ -7,10 +7,12 @@ export const validUser = Object.freeze({
 });
 
 export const PUBLIC_USER_KEYS = [
+  'allowGhosts',
   'createdAt',
   'draws',
   'elo',
   'email',
+  'ghostNoticeDismissed',
   'id',
   'losses',
   'preferredLanguage',
